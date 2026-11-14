@@ -1,16 +1,18 @@
 package com.pochenette.pochenette
 
 import android.Manifest
+import android.content.Intent
 import android.content.pm.PackageManager
 import android.database.ContentObserver
+import android.net.Uri
 import android.os.Handler
 import android.os.Looper
 import android.provider.Telephony
-import io.flutter.embedding.android.FlutterActivity
+import io.flutter.embedding.android.FlutterFragmentActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
 
-class MainActivity : FlutterActivity() {
+class MainActivity : FlutterFragmentActivity() {
     private lateinit var channel: MethodChannel
     private var pendingPermission: MethodChannel.Result? = null
     private var observing = false
@@ -33,6 +35,7 @@ class MainActivity : FlutterActivity() {
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
         val state = getSharedPreferences("pochenette", MODE_PRIVATE)
+        val secure = getSharedPreferences("pochenette_secure", MODE_PRIVATE)
         channel = MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "pochenette/local")
         channel.setMethodCallHandler { call, result ->
             when (call.method) {
@@ -40,6 +43,32 @@ class MainActivity : FlutterActivity() {
                 "save" -> {
                     val saved = state.edit().putString("state", call.arguments as String).commit()
                     if (saved) result.success(null) else result.error("SAVE", "Écriture impossible", null)
+                }
+                "secureGet" -> result.success(secure.getString(call.arguments as String, null))
+                "secureSet" -> {
+                    @Suppress("UNCHECKED_CAST")
+                    val args = call.arguments as? Map<String, Any?>
+                    val key = args?.get("key") as? String
+                    if (key.isNullOrEmpty()) {
+                        result.error("SECURE", "Clé manquante", null)
+                    } else {
+                        val value = args?.get("value") as? String
+                        val editor = secure.edit()
+                        if (value == null) editor.remove(key) else editor.putString(key, value)
+                        if (editor.commit()) result.success(true)
+                        else result.error("SECURE", "Écriture sécurisée impossible", null)
+                    }
+                }
+                "dialUssd" -> {
+                    try {
+                        val code = call.arguments as String
+                        val encoded = Uri.encode(code)
+                        val intent = Intent(Intent.ACTION_DIAL, Uri.parse("tel:$encoded"))
+                        startActivity(intent)
+                        result.success(null)
+                    } catch (error: Exception) {
+                        result.error("DIAL", "Impossible d’ouvrir le composeur", null)
+                    }
                 }
                 "permission" -> result.success(canRead())
                 "requestPermission" -> when {

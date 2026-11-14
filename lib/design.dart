@@ -64,7 +64,7 @@ ThemeData pocheTheme() {
     navigationBarTheme: const NavigationBarThemeData(
       backgroundColor: Colors.white,
       elevation: 0,
-      height: 68,
+      height: 72,
       indicatorColor: Color(0xffc5f6e3),
       labelTextStyle: WidgetStatePropertyAll(
         TextStyle(fontSize: 11, fontWeight: FontWeight.w700),
@@ -109,12 +109,13 @@ class IconPlate extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => Container(
-    width: 44,
-    height: 44,
+    width: 48,
+    height: 48,
     decoration: BoxDecoration(
       color: color.withValues(alpha: .11),
-      borderRadius: BorderRadius.circular(15),
+      borderRadius: BorderRadius.circular(14),
     ),
+    alignment: Alignment.center,
     child: Icon(icon, size: 22, color: color),
   );
 }
@@ -136,7 +137,7 @@ class SummaryPanel extends StatelessWidget {
   @override
   Widget build(BuildContext context) => Container(
     margin: const EdgeInsets.only(bottom: 16),
-    padding: const EdgeInsets.all(20),
+    padding: const EdgeInsets.fromLTRB(18, 18, 18, 16),
     decoration: BoxDecoration(
       gradient: const LinearGradient(
         colors: [Color(0xff004c37), Color(0xff087f59)],
@@ -150,15 +151,23 @@ class SummaryPanel extends StatelessWidget {
       children: [
         Text(
           label,
+          maxLines: 2,
+          overflow: TextOverflow.ellipsis,
           style: const TextStyle(
             color: Color(0xffa5f3d0),
             fontWeight: FontWeight.w700,
+            height: 1.25,
           ),
         ),
-        const SizedBox(height: 6),
-        Text(
-          amount,
-          style: numberStyle.copyWith(color: Colors.white, fontSize: 30),
+        const SizedBox(height: 8),
+        FittedBox(
+          fit: BoxFit.scaleDown,
+          alignment: Alignment.centerLeft,
+          child: Text(
+            amount,
+            maxLines: 1,
+            style: numberStyle.copyWith(color: Colors.white, fontSize: 30),
+          ),
         ),
         if (progress != null) ...[
           const SizedBox(height: 14),
@@ -168,8 +177,17 @@ class SummaryPanel extends StatelessWidget {
             track: const Color(0xff004c37),
           ),
         ],
-        const SizedBox(height: 12),
-        Text(footer, style: const TextStyle(color: Colors.white, fontSize: 12)),
+        const SizedBox(height: 10),
+        Text(
+          footer,
+          maxLines: 2,
+          overflow: TextOverflow.ellipsis,
+          style: const TextStyle(
+            color: Color(0xffd1fae5),
+            fontSize: 12,
+            height: 1.35,
+          ),
+        ),
       ],
     ),
   );

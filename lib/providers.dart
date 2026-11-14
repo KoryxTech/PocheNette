@@ -36,15 +36,21 @@ Widget providerMark(String name, {bool bank = false}) {
   final logo = providerLogos[name];
   if (logo != null) {
     return Container(
-      width: 72,
-      height: 46,
-      padding: const EdgeInsets.all(4),
+      width: 48,
+      height: 48,
+      padding: const EdgeInsets.all(7),
       decoration: BoxDecoration(
         border: Border.all(color: border),
-        borderRadius: BorderRadius.circular(12),
+        borderRadius: BorderRadius.circular(14),
         color: Colors.white,
       ),
-      child: Image.asset('assets/providers/$logo.png', fit: BoxFit.contain),
+      clipBehavior: Clip.antiAlias,
+      child: Image.asset(
+        'assets/providers/$logo.png',
+        fit: BoxFit.contain,
+        filterQuality: FilterQuality.medium,
+        gaplessPlayback: true,
+      ),
     );
   }
   return IconPlate(

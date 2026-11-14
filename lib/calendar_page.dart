@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import 'catalog.dart';
 import 'design.dart';
+import 'l10n/l10n.dart';
 
 typedef RowData = Map<String, dynamic>;
 
@@ -38,27 +39,14 @@ class _ChargesCalendarPageState extends State<ChargesCalendarPage> {
 
   @override
   Widget build(BuildContext context) {
+    final l10n = context.l10n;
     final first = DateTime(month.year, month.month, 1);
     final daysInMonth = DateTime(month.year, month.month + 1, 0).day;
     final startWeekday = first.weekday % 7;
-    final labels = ['D', 'L', 'M', 'M', 'J', 'V', 'S'];
-    final monthNames = const [
-      'Janvier',
-      'Février',
-      'Mars',
-      'Avril',
-      'Mai',
-      'Juin',
-      'Juillet',
-      'Août',
-      'Septembre',
-      'Octobre',
-      'Novembre',
-      'Décembre',
-    ];
+    final labels = l10n.weekdayLetters;
 
     return Scaffold(
-      appBar: AppBar(title: const Text('Calendrier des échéances')),
+      appBar: AppBar(title: Text(l10n.t('Calendrier des échéances'))),
       body: ListView(
         padding: const EdgeInsets.all(16),
         children: [
@@ -72,7 +60,7 @@ class _ChargesCalendarPageState extends State<ChargesCalendarPage> {
               ),
               Expanded(
                 child: Text(
-                  '${monthNames[month.month - 1]} ${month.year}',
+                  '${l10n.month(month.month)} ${month.year}',
                   textAlign: TextAlign.center,
                   style: const TextStyle(
                     fontWeight: FontWeight.w800,
@@ -127,7 +115,7 @@ class _ChargesCalendarPageState extends State<ChargesCalendarPage> {
                   date.day == today.day;
               return Container(
                 decoration: BoxDecoration(
-                  color: items.isEmpty ? Colors.white : const Color(0xffc5f6e3),
+                  color: items.isEmpty ? Colors.white : mintWash,
                   borderRadius: BorderRadius.circular(12),
                   border: Border.all(color: isToday ? emerald : border),
                 ),
@@ -152,9 +140,9 @@ class _ChargesCalendarPageState extends State<ChargesCalendarPage> {
             },
           ),
           const SizedBox(height: 18),
-          const Text(
-            'Échéances du mois',
-            style: TextStyle(fontWeight: FontWeight.w800, fontSize: 18),
+          Text(
+            l10n.t('Échéances du mois'),
+            style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 18),
           ),
           const SizedBox(height: 10),
           if (widget.charges
@@ -163,11 +151,11 @@ class _ChargesCalendarPageState extends State<ChargesCalendarPage> {
                 return date.year == month.year && date.month == month.month;
               })
               .isEmpty)
-            const Card(
+            Card(
               child: ListTile(
-                leading: IconPlate(Icons.event_available_outlined),
-                title: Text('Aucune échéance'),
-                subtitle: Text('Ajoute une charge pour la voir ici.'),
+                leading: const IconPlate(Icons.event_available_outlined),
+                title: Text(l10n.t('Aucune échéance')),
+                subtitle: Text(l10n.t('Ajoute une charge pour la voir ici.')),
               ),
             ),
           for (final charge
@@ -179,12 +167,12 @@ class _ChargesCalendarPageState extends State<ChargesCalendarPage> {
               child: ListTile(
                 leading: IconPlate(categoryIcon(charge['name'] as String?)),
                 title: Text(
-                  charge['name'] as String,
+                  l10n.t(charge['name'] as String),
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                 ),
                 subtitle: Text(
-                  '${DateTime.parse(charge['date'] as String).day}/${month.month}/${month.year} · ${charge['frequency']}',
+                  '${DateTime.parse(charge['date'] as String).day}/${month.month}/${month.year} · ${l10n.t(charge['frequency'] as String)}',
                 ),
                 trailing: Text(
                   widget.money(charge['amount'] as int),

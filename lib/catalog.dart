@@ -169,6 +169,75 @@ void mergeDefaultCategories(List<String> categories) {
   }
 }
 
+/// Catégories proposées selon le type d’opération (dépense vs revenu).
+List<String> categoriesForTransaction({
+  required bool isIncome,
+  required List<String> stored,
+  List<String> extraExpenses = const [],
+  List<String> extraIncomes = const [],
+}) {
+  final defaults = isIncome ? incomeCategories : expenseCategories;
+  final opposite = isIncome ? expenseCategories : incomeCategories;
+  final extras = isIncome ? extraIncomes : extraExpenses;
+  final oppositeExtras = isIncome ? extraExpenses : extraIncomes;
+  final result = <String>[...defaults];
+  for (final name in extras) {
+    if (!result.contains(name)) result.add(name);
+  }
+  for (final name in stored) {
+    if (defaults.contains(name) || opposite.contains(name)) continue;
+    if (oppositeExtras.contains(name)) continue;
+    if (!result.contains(name)) result.add(name);
+  }
+  return result;
+}
+
+const _shortCategoryLabels = <String, String>{
+  'Marché / courses': 'Marché',
+  'Maquis / restaurant': 'Maquis',
+  'Transport (taxi, okada)': 'Transport',
+  'Carburant': 'Carburant',
+  'Crédit téléphone': 'Crédit',
+  'Internet / data': 'Internet',
+  'Loyer': 'Loyer',
+  'Eau (Camwater)': 'Eau',
+  'Électricité (ENEO)': 'ENEO',
+  'Canal+ / TV': 'Canal+',
+  'Scolarité': 'Scolarité',
+  'Santé / pharmacie': 'Santé',
+  'Tontine (cotisation)': 'Tontine',
+  'Cérémonie / deuil': 'Cérémonie',
+  'Cadeaux': 'Cadeaux',
+  'Habillage': 'Habillage',
+  'Domestique / boy': 'Domestique',
+  'Autre dépense': 'Autres',
+  'Salaire': 'Salaire',
+  'Acompte / avance': 'Acompte',
+  'Business / vente': 'Business',
+  'Tontine (réception)': 'Tontine',
+  'Transfert famille': 'Famille',
+  'Freelance / prestation': 'Freelance',
+  'Agriculture / vente': 'Agriculture',
+  'Cadeau reçu': 'Cadeau',
+  'Remboursement': 'Rembours.',
+  'Autre revenu': 'Autres',
+  'Électricité ENEO': 'ENEO',
+  'Eau Camwater': 'Eau',
+  'Internet / fibre': 'Fibre',
+  'Cotisation tontine': 'Tontine',
+  'Frais de scolarité': 'Scolarité',
+  'Assurance moto': 'Ass. moto',
+  'Assurance véhicule': 'Ass. auto',
+  'Gardiennage': 'Gardien',
+  'Syndic / copropriété': 'Syndic',
+  'Abonnement sport': 'Sport',
+  'Autre charge': 'Autres',
+};
+
+/// Libellé court pour légendes / chips (données inchangées).
+String shortCategoryLabel(String name) =>
+    _shortCategoryLabels[name] ?? name;
+
 IconData categoryIcon(String? name) {
   if (name == null || name.trim().isEmpty) {
     return Icons.label_outline;

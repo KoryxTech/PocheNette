@@ -6,6 +6,7 @@ import 'package:flutter/services.dart';
 import 'package:local_auth/local_auth.dart';
 
 import 'design.dart';
+import 'l10n/l10n.dart';
 
 String hashPin(String pin) =>
     sha256.convert(utf8.encode('pochenette:$pin')).toString();
@@ -70,10 +71,11 @@ class AppLock {
     }
   }
 
-  Future<bool> unlockWithBiometrics() async {
+  Future<bool> unlockWithBiometrics({String? reason}) async {
     try {
       return await auth.authenticate(
-        localizedReason: 'Déverrouille PocheNette avec ta biométrie',
+        localizedReason:
+            reason ?? 'Déverrouille PocheNette avec ta biométrie',
         biometricOnly: true,
         persistAcrossBackgrounding: true,
       );
@@ -126,22 +128,23 @@ Future<String?> showPinSheet(
 }
 
 Future<String?> setupPinFlow(BuildContext context) async {
+  final l10n = context.l10n;
   final first = await showPinSheet(
     context,
-    title: 'Crée ton code',
-    subtitle: 'Choisis 4 chiffres pour protéger PocheNette.',
+    title: l10n.t('Crée ton code'),
+    subtitle: l10n.t('Choisis 4 chiffres pour protéger PocheNette.'),
   );
   if (first == null || !context.mounted) return null;
   final second = await showPinSheet(
     context,
-    title: 'Confirme ton code',
-    subtitle: 'Saisis le même code une seconde fois.',
+    title: l10n.t('Confirme ton code'),
+    subtitle: l10n.t('Saisis le même code une seconde fois.'),
   );
   if (second == null) return null;
   if (first != second) {
     if (context.mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Les codes ne correspondent pas.')),
+        SnackBar(content: Text(l10n.t('Les codes ne correspondent pas.'))),
       );
     }
     return null;
@@ -158,7 +161,7 @@ Future<String?> askPin(
   return showPinSheet(
     context,
     title: title,
-    subtitle: 'Saisis ton code à 4 chiffres.',
+    subtitle: context.l10n.t('Saisis ton code à 4 chiffres.'),
   );
 }
 
@@ -217,7 +220,7 @@ class _PinGateState extends State<_PinGate> {
   Widget build(BuildContext context) {
     final bottom = MediaQuery.paddingOf(context).bottom;
     return Scaffold(
-      backgroundColor: const Color(0xff003d2c),
+      backgroundColor: navy,
       body: SafeArea(
         child: Padding(
           padding: EdgeInsets.fromLTRB(20, 8, 20, 20 + bottom.clamp(0, 48)),
@@ -232,7 +235,7 @@ class _PinGateState extends State<_PinGate> {
                     minimumSize: const Size(96, 48),
                   ),
                   icon: const Icon(Icons.close_rounded),
-                  label: const Text('Fermer'),
+                  label: Text(context.l10n.t('Fermer')),
                 ),
               ),
               const Spacer(flex: 2),
@@ -266,7 +269,7 @@ class _PinGateState extends State<_PinGate> {
                 style: TextStyle(
                   color: error != null
                       ? const Color(0xffffb4c0)
-                      : const Color(0xffa5f3d0),
+                      : mint,
                   height: 1.4,
                 ),
               ),
@@ -371,14 +374,14 @@ class _KeyButton extends StatelessWidget {
     if (label == 'bio') {
       if (!showBio) return const SizedBox(width: 78, height: 78);
       return _round(
-        semanticLabel: 'Biométrie',
+        semanticLabel: context.l10n.t('Biométrie'),
         onTap: enabled ? onBio : null,
         child: const Icon(Icons.fingerprint, size: 30, color: emerald),
       );
     }
     if (label == 'del') {
       return _round(
-        semanticLabel: 'Effacer',
+        semanticLabel: context.l10n.t('Effacer'),
         onTap: enabled ? onDelete : null,
         child: const Icon(Icons.backspace_outlined, size: 24, color: ink),
       );
@@ -460,13 +463,17 @@ class _LockScreenState extends State<LockScreen> {
       busy = true;
       error = null;
     });
-    final ok = await widget.lock.unlockWithBiometrics();
+    final ok = await widget.lock.unlockWithBiometrics(
+      reason: context.l10n.t('Déverrouille PocheNette avec ta biométrie'),
+    );
     if (!mounted) return;
     setState(() => busy = false);
     if (ok) {
       widget.onUnlocked();
     } else {
-      setState(() => error = 'Biométrie annulée — utilise ton code');
+      setState(
+        () => error = context.l10n.t('Biométrie annulée — utilise ton code'),
+      );
     }
   }
 
@@ -487,7 +494,7 @@ class _LockScreenState extends State<LockScreen> {
     setState(() {
       busy = false;
       pin = '';
-      error = 'Code incorrect';
+      error = context.l10n.t('Code incorrect');
     });
   }
 
@@ -507,7 +514,7 @@ class _LockScreenState extends State<LockScreen> {
     return PopScope(
       canPop: false,
       child: Scaffold(
-        backgroundColor: const Color(0xff003d2c),
+        backgroundColor: navy,
         body: SafeArea(
           child: Padding(
             padding: EdgeInsets.fromLTRB(20, 24, 20, 20 + bottom.clamp(0, 48)),
@@ -538,12 +545,12 @@ class _LockScreenState extends State<LockScreen> {
               ),
               const SizedBox(height: 8),
               Text(
-                error ?? 'Entre ton code pour continuer',
+                error ?? context.l10n.t('Entre ton code pour continuer'),
                 textAlign: TextAlign.center,
                 style: TextStyle(
                   color: error != null
                       ? const Color(0xffffb4c0)
-                      : const Color(0xffa5f3d0),
+                      : mint,
                 ),
               ),
               const SizedBox(height: 28),

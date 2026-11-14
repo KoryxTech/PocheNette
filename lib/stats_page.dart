@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import 'catalog.dart';
 import 'design.dart';
+import 'l10n/l10n.dart';
 
 typedef RowData = Map<String, dynamic>;
 
@@ -19,6 +20,7 @@ class StatsPage extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final l10n = context.l10n;
     final now = DateTime.now();
     final monthStart = DateTime(now.year, now.month);
     final monthOps = operations
@@ -44,26 +46,28 @@ class StatsPage extends StatelessWidget {
     );
 
     return Scaffold(
-      appBar: AppBar(title: const Text('Statistiques')),
+      appBar: AppBar(title: Text(l10n.t('Statistiques'))),
       body: ListView(
         padding: const EdgeInsets.all(16),
         children: [
           SummaryPanel(
-            label: 'Ce mois-ci',
+            label: l10n.t('Ce mois-ci'),
             amount: money(income - expense),
-            footer: 'Entrées ${money(income)} · Sorties ${money(expense)}',
+            footer: l10n.isEnglish
+                ? 'In ${money(income)} · Out ${money(expense)}'
+                : 'Entrées ${money(income)} · Sorties ${money(expense)}',
           ),
-          const Text(
-            'Répartition des dépenses',
-            style: TextStyle(fontWeight: FontWeight.w800, fontSize: 18),
+          Text(
+            l10n.t('Répartition des dépenses'),
+            style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 18),
           ),
           const SizedBox(height: 12),
           if (byCategory.isEmpty)
-            const Card(
+            Card(
               child: ListTile(
-                leading: IconPlate(Icons.bar_chart_outlined),
-                title: Text('Pas encore de dépenses'),
-                subtitle: Text('Les catégories apparaîtront ici.'),
+                leading: const IconPlate(Icons.bar_chart_outlined),
+                title: Text(l10n.t('Pas encore de dépenses')),
+                subtitle: Text(l10n.t('Les catégories apparaîtront ici.')),
               ),
             ),
           for (final (index, entry) in byCategory.entries.indexed)
@@ -83,7 +87,7 @@ class StatsPage extends StatelessWidget {
                         const SizedBox(width: 10),
                         Expanded(
                           child: Text(
-                            entry.key,
+                            l10n.t(entry.key),
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
                             style: const TextStyle(fontWeight: FontWeight.w700),
@@ -107,9 +111,9 @@ class StatsPage extends StatelessWidget {
               ),
             ),
           const SizedBox(height: 12),
-          const Text(
-            'Catégories suivies',
-            style: TextStyle(fontWeight: FontWeight.w800, fontSize: 18),
+          Text(
+            l10n.t('Catégories suivies'),
+            style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 18),
           ),
           const SizedBox(height: 8),
           Wrap(
@@ -119,7 +123,7 @@ class StatsPage extends StatelessWidget {
               for (final category in categories)
                 Chip(
                   avatar: Icon(categoryIcon(category), size: 16, color: emerald),
-                  label: Text(category),
+                  label: Text(l10n.t(category)),
                 ),
             ],
           ),

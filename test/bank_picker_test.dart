@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -10,7 +12,26 @@ void main() {
     const channel = MethodChannel('pochenette/local');
     tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
       channel,
-      (call) async => null,
+      (call) async {
+        if (call.method == 'load') {
+          return jsonEncode({
+            'onboardingDone': true,
+            'localeCode': 'fr',
+            'wallets': <dynamic>[],
+            'operations': <dynamic>[],
+            'charges': <dynamic>[],
+            'goals': <dynamic>[],
+            'seen': <dynamic>[],
+            'enabled': false,
+            'since': 0,
+            'categories': <dynamic>[],
+          });
+        }
+        if (call.method == 'secureGet') return null;
+        if (call.method == 'permission') return false;
+        if (call.method == 'save') return null;
+        return null;
+      },
     );
     await tester.pumpWidget(const PocheNette());
     await tester.pumpAndSettle();

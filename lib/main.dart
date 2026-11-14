@@ -1,18 +1,24 @@
 import 'dart:convert';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter_localizations/flutter_localizations.dart';
 
 import 'alerts.dart';
 import 'calendar_page.dart';
 import 'catalog.dart';
 import 'design.dart';
+import 'l10n/l10n.dart';
 import 'onboarding.dart';
 import 'page_guide.dart';
 import 'providers.dart';
 import 'receipt.dart';
 import 'security.dart';
 import 'stats_page.dart';
+import 'features/transfer/domain/transfer_bundle.dart';
+import 'features/transfer/presentation/transfer_export_page.dart';
+import 'features/transfer/presentation/transfer_import_page.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -21,14 +27,46 @@ Future<void> main() async {
 
 typedef RowData = Map<String, dynamic>;
 
-class PocheNette extends StatelessWidget {
+class PocheNette extends StatefulWidget {
   const PocheNette({super.key});
+
+  static PocheNetteState? of(BuildContext context) =>
+      context.findAncestorStateOfType<PocheNetteState>();
+
+  @override
+  State<PocheNette> createState() => PocheNetteState();
+}
+
+class PocheNetteState extends State<PocheNette> {
+  Locale? _locale;
+
+  Locale? get locale => _locale;
+
+  void setLocale(Locale? locale) {
+    setState(() => _locale = locale);
+  }
 
   @override
   Widget build(BuildContext context) => MaterialApp(
     title: 'PocheNette',
     debugShowCheckedModeBanner: false,
     theme: pocheTheme(),
+    locale: _locale,
+    supportedLocales: L10n.supported,
+    localeResolutionCallback: (device, supported) {
+      if (_locale != null) return _locale;
+      if (device == null) return const Locale('fr');
+      for (final locale in supported) {
+        if (locale.languageCode == device.languageCode) return locale;
+      }
+      return const Locale('fr');
+    },
+    localizationsDelegates: const [
+      L10nDelegate(),
+      GlobalMaterialLocalizations.delegate,
+      GlobalWidgetsLocalizations.delegate,
+      GlobalCupertinoLocalizations.delegate,
+    ],
     home: const Dashboard(),
   );
 }
@@ -64,13 +102,6 @@ class _DashboardState extends State<Dashboard> with WidgetsBindingObserver {
     'Espèces',
     'Banque',
   ];
-  static const titles = [
-    'Accueil',
-    'Portefeuilles',
-    'Charges',
-    'Épargne',
-    'Réglages',
-  ];
 
   late final AppLock lock = AppLock(channel);
   int tab = 0;
@@ -87,6 +118,7 @@ class _DashboardState extends State<Dashboard> with WidgetsBindingObserver {
   bool biometricEnabled = false;
   bool thresholdEnabled = false;
   bool alertsEnabled = true;
+  String? localeCode;
   int since = 0;
   int thresholdAmount = 10000;
   List<RowData> wallets = [];
@@ -95,12 +127,8 @@ class _DashboardState extends State<Dashboard> with WidgetsBindingObserver {
   List<RowData> goals = [];
   List<String> seen = [];
   List<String> categories = List<String>.from(defaultCategories());
-  Map<String, String> ussdCodes = {
-    'Orange Money': '#150#',
-    'MTN MoMo': '*126#',
-    'Wave': '*831#',
-  };
-
+  List<String> extraExpenseCategories = [];
+  List<String> extraIncomeCategories = [];
   @override
   void initState() {
     super.initState();
@@ -141,6 +169,10 @@ class _DashboardState extends State<Dashboard> with WidgetsBindingObserver {
         lockEnabled = false;
         biometricEnabled = false;
       }
+      if (!mounted) return;
+      if (localeCode != null) {
+        PocheNette.of(context)?.setLocale(Locale(localeCode!));
+      }
       setState(() {
         ready = true;
         unlocked = !lockEnabled;
@@ -166,11 +198,13 @@ class _DashboardState extends State<Dashboard> with WidgetsBindingObserver {
     'enabled': enabled,
     'since': since,
     'categories': categories,
+    'extraExpenseCategories': extraExpenseCategories,
+    'extraIncomeCategories': extraIncomeCategories,
     'onboardingDone': onboardingDone,
     'thresholdEnabled': thresholdEnabled,
     'thresholdAmount': thresholdAmount,
     'alertsEnabled': alertsEnabled,
-    'ussdCodes': ussdCodes,
+    'localeCode': localeCode,
   };
 
   void restore(RowData data) {
@@ -183,18 +217,19 @@ class _DashboardState extends State<Dashboard> with WidgetsBindingObserver {
       data['categories'] as List? ?? defaultCategories(),
     );
     mergeDefaultCategories(categories);
+    extraExpenseCategories = List<String>.from(
+      data['extraExpenseCategories'] as List? ?? const [],
+    );
+    extraIncomeCategories = List<String>.from(
+      data['extraIncomeCategories'] as List? ?? const [],
+    );
     enabled = data['enabled'] as bool? ?? false;
     since = asInt(data['since']);
     onboardingDone = data['onboardingDone'] as bool? ?? false;
     thresholdEnabled = data['thresholdEnabled'] as bool? ?? false;
     thresholdAmount = asInt(data['thresholdAmount'] ?? 10000);
     alertsEnabled = data['alertsEnabled'] as bool? ?? true;
-    final codes = data['ussdCodes'];
-    if (codes is Map) {
-      ussdCodes = codes.map(
-        (key, value) => MapEntry(key.toString(), value.toString()),
-      );
-    }
+    localeCode = data['localeCode'] as String?;
   }
 
   RowData normalizeGoal(RowData goal) {
@@ -214,10 +249,77 @@ class _DashboardState extends State<Dashboard> with WidgetsBindingObserver {
     return goal;
   }
 
+
+  Future<TransferBundle> buildTransferBundle() async {
+    return TransferBundle(
+      version: 1,
+      exportedAtMs: DateTime.now().millisecondsSinceEpoch,
+      state: Map<String, dynamic>.from(snapshot()),
+      secure: {
+        'pinHash': await lock.pinHash,
+        'lockEnabled': (await lock.lockEnabled) ? '1' : '0',
+        // Biométrie à réactiver sur le nouvel appareil.
+        'biometricEnabled': '0',
+      },
+    );
+  }
+
+  Future<void> applyTransferBundle(TransferBundle bundle) async {
+    restore(bundle.state);
+    onboardingDone = true;
+    final pinHash = bundle.secure['pinHash'];
+    final lockOn = bundle.secure['lockEnabled'] == '1' &&
+        pinHash != null &&
+        pinHash.isNotEmpty;
+    if (lockOn) {
+      await lock.write('pinHash', pinHash);
+      await lock.setLockEnabled(true);
+    } else {
+      await lock.clearPin();
+    }
+    await lock.setBiometricEnabled(false);
+    await channel.invokeMethod<void>('save', jsonEncode(snapshot()));
+    if (!mounted) return;
+    setState(() {
+      lockEnabled = lockOn;
+      biometricEnabled = false;
+      unlocked = !lockOn;
+      ready = true;
+    });
+    if (localeCode != null) {
+      PocheNette.of(context)?.setLocale(Locale(localeCode!));
+    }
+    await refreshAlerts();
+  }
+
+  Future<void> openTransferExport() async {
+    final ok = await Navigator.push<bool>(
+      context,
+      MaterialPageRoute<bool>(
+        builder: (_) => TransferExportPage(buildBundle: buildTransferBundle),
+      ),
+    );
+    if (ok == true && mounted) {
+      message('Transfert envoyé.');
+    }
+  }
+
+  Future<void> openTransferImport() async {
+    final ok = await Navigator.push<bool>(
+      context,
+      MaterialPageRoute<bool>(
+        builder: (_) => TransferImportPage(onReceived: applyTransferBundle),
+      ),
+    );
+    if (ok == true && mounted) {
+      message('Données importées. Bienvenue sur ton nouveau téléphone.');
+    }
+  }
+
   Future<void> refreshAlerts() async {
     if (!alertsEnabled || !ready) return;
     if (thresholdEnabled && total < thresholdAmount) {
-      await notifyThreshold(thresholdAmount);
+      await notifyThreshold(thresholdAmount, l10n: l10n);
     }
     final today = DateTime.now();
     for (final charge in charges) {
@@ -225,7 +327,11 @@ class _DashboardState extends State<Dashboard> with WidgetsBindingObserver {
       if (date.year == today.year &&
           date.month == today.month &&
           date.day == today.day) {
-        await notifyChargeDue(charge['name'] as String, charge['amount'] as int);
+        await notifyChargeDue(
+          charge['name'] as String,
+          charge['amount'] as int,
+          l10n: l10n,
+        );
       }
     }
   }
@@ -253,10 +359,22 @@ class _DashboardState extends State<Dashboard> with WidgetsBindingObserver {
     }
   }
 
+  L10n get l10n => L10n.of(context);
+  String tr(String source) => l10n.t(source);
+  bool get isIos => defaultTargetPlatform == TargetPlatform.iOS;
+
   void message(String text) {
     if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(text)));
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(tr(text))),
+      );
     }
+  }
+
+  Future<void> setAppLocale(String? code) async {
+    localeCode = code;
+    PocheNette.of(context)?.setLocale(code == null ? null : Locale(code));
+    await change(() {});
   }
 
   Future<void> sync({bool manual = false}) async {
@@ -269,7 +387,11 @@ class _DashboardState extends State<Dashboard> with WidgetsBindingObserver {
     try {
       if (await channel.invokeMethod<bool>('permission') != true) {
         if (manual) {
-          message('Autorise la lecture des SMS dans les réglages Android.');
+          message(
+            isIos
+                ? 'La lecture SMS n’est pas disponible sur iOS. Utilise la saisie manuelle.'
+                : 'Autorise la lecture des SMS dans les réglages Android.',
+          );
         }
         return;
       }
@@ -349,18 +471,18 @@ class _DashboardState extends State<Dashboard> with WidgetsBindingObserver {
     final agreed = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
-        title: const Text('Mise à jour par SMS'),
-        content: const Text(
-          'PocheNette demande l’accès à la boîte SMS pour reconnaître les reçus Orange Money et MTN MoMo, enregistrer les opérations reconnues et actualiser les soldes. Le traitement et les données restent sur ce téléphone. Tu peux désactiver la lecture à tout moment.',
+        title: Text(tr('Mise à jour par SMS')),
+        content: Text(
+          tr('PocheNette demande l’accès à la boîte SMS pour reconnaître les reçus Orange Money et MTN MoMo, enregistrer les opérations reconnues et actualiser les soldes. Le traitement et les données restent sur ce téléphone. Tu peux désactiver la lecture à tout moment.'),
         ),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context, false),
-            child: const Text('Annuler'),
+            child: Text(tr('Annuler')),
           ),
           FilledButton(
             onPressed: () => Navigator.pop(context, true),
-            child: const Text('Continuer'),
+            child: Text(tr('Continuer')),
           ),
         ],
       ),
@@ -412,11 +534,11 @@ class _DashboardState extends State<Dashboard> with WidgetsBindingObserver {
         children: [
           SimpleDialogOption(
             onPressed: () => Navigator.pop(context, 'paid'),
-            child: const Text('Marquer comme réglée'),
+            child: Text(tr('Marquer comme réglée')),
           ),
           SimpleDialogOption(
             onPressed: () => Navigator.pop(context, 'delete'),
-            child: const Text('Supprimer la charge'),
+            child: Text(tr('Supprimer la charge')),
           ),
         ],
       ),
@@ -471,6 +593,8 @@ class _DashboardState extends State<Dashboard> with WidgetsBindingObserver {
       useSafeArea: true,
       backgroundColor: Colors.transparent,
       builder: (context) {
+        final sheetL10n = L10n.of(context);
+        String sheetTr(String source) => sheetL10n.t(source);
         final inset = MediaQuery.viewInsetsOf(context).bottom;
         final safeBottom = MediaQuery.paddingOf(context).bottom;
         return Padding(
@@ -511,7 +635,7 @@ class _DashboardState extends State<Dashboard> with WidgetsBindingObserver {
                       width: 52,
                       height: 52,
                       decoration: BoxDecoration(
-                        color: const Color(0xffc5f6e3),
+                        color: mintWash,
                         borderRadius: BorderRadius.circular(16),
                       ),
                       child: const Icon(
@@ -521,7 +645,7 @@ class _DashboardState extends State<Dashboard> with WidgetsBindingObserver {
                     ),
                     const SizedBox(height: 14),
                     Text(
-                      title,
+                      sheetTr(title),
                       style: const TextStyle(
                         fontSize: 22,
                         fontWeight: FontWeight.w800,
@@ -530,7 +654,7 @@ class _DashboardState extends State<Dashboard> with WidgetsBindingObserver {
                     if (subtitle != null) ...[
                       const SizedBox(height: 6),
                       Text(
-                        subtitle,
+                        sheetTr(subtitle),
                         style: const TextStyle(color: muted, height: 1.35),
                       ),
                     ],
@@ -546,7 +670,7 @@ class _DashboardState extends State<Dashboard> with WidgetsBindingObserver {
                                     : fields[i].choices!.first,
                                 isExpanded: true,
                                 decoration: InputDecoration(
-                                  labelText: fields[i].label,
+                                  labelText: sheetTr(fields[i].label),
                                   filled: true,
                                   fillColor: canvas,
                                   prefixIcon: Icon(
@@ -561,6 +685,7 @@ class _DashboardState extends State<Dashboard> with WidgetsBindingObserver {
                                         child: _choiceLabel(
                                           fields[i].label,
                                           value,
+                                          translate: sheetTr,
                                         ),
                                       ),
                                     )
@@ -572,6 +697,7 @@ class _DashboardState extends State<Dashboard> with WidgetsBindingObserver {
                                         child: _choiceLabel(
                                           fields[i].label,
                                           value,
+                                          translate: sheetTr,
                                         ),
                                       ),
                                     )
@@ -583,7 +709,7 @@ class _DashboardState extends State<Dashboard> with WidgetsBindingObserver {
                             : TextFormField(
                                 initialValue: values[i],
                                 decoration: InputDecoration(
-                                  labelText: fields[i].label,
+                                  labelText: sheetTr(fields[i].label),
                                   filled: true,
                                   fillColor: canvas,
                                   prefixIcon: Icon(
@@ -605,7 +731,7 @@ class _DashboardState extends State<Dashboard> with WidgetsBindingObserver {
                                   if (values[i].isEmpty) {
                                     return fields[i].optional
                                         ? null
-                                        : 'Champ requis';
+                                        : sheetTr('Champ requis');
                                   }
                                   if (fields[i].number &&
                                       int.tryParse(
@@ -615,7 +741,7 @@ class _DashboardState extends State<Dashboard> with WidgetsBindingObserver {
                                             ),
                                           ) ==
                                           null) {
-                                    return 'Montant entier requis';
+                                    return sheetTr('Montant entier requis');
                                   }
                                   return null;
                                 },
@@ -638,13 +764,13 @@ class _DashboardState extends State<Dashboard> with WidgetsBindingObserver {
                             Navigator.pop(context, values);
                           }
                         },
-                        child: Text(confirmLabel),
+                        child: Text(sheetTr(confirmLabel)),
                       ),
                     ),
                     const SizedBox(height: 4),
                     TextButton(
                       onPressed: () => Navigator.pop(context),
-                      child: const Text('Annuler'),
+                      child: Text(sheetTr('Annuler')),
                     ),
                   ],
                 ),
@@ -679,43 +805,71 @@ class _DashboardState extends State<Dashboard> with WidgetsBindingObserver {
 
   IconData _fieldIcon(String label) {
     final lower = label.toLowerCase();
-    if (lower.contains('catégorie') || lower.contains('categorie')) {
+    if (lower.contains('catégorie') ||
+        lower.contains('categorie') ||
+        lower.contains('category')) {
       return Icons.category_outlined;
     }
-    if (lower.contains('charge')) return Icons.event_note_outlined;
+    if (lower.contains('charge') || lower.contains('bill')) {
+      return Icons.event_note_outlined;
+    }
     if (lower.contains('portefeuille') ||
+        lower.contains('wallet') ||
         lower == 'depuis' ||
+        lower == 'from' ||
         lower == 'vers' ||
+        lower == 'to' ||
         lower.contains('destination')) {
       return Icons.account_balance_wallet_outlined;
     }
-    if (lower.contains('fréquence') || lower.contains('frequence')) {
+    if (lower.contains('fréquence') ||
+        lower.contains('frequence') ||
+        lower.contains('frequency')) {
       return Icons.repeat_outlined;
     }
     if (lower == 'type') return Icons.tune_outlined;
-    if (lower.contains('montant')) return Icons.payments_outlined;
-    if (lower.contains('détail') || lower.contains('detail')) {
+    if (lower.contains('montant') || lower.contains('amount')) {
+      return Icons.payments_outlined;
+    }
+    if (lower.contains('détail') ||
+        lower.contains('detail') ||
+        lower.contains('details')) {
       return Icons.notes_outlined;
     }
-    if (lower.contains('nom') || lower.contains('projet')) {
+    if (lower.contains('nom') ||
+        lower.contains('name') ||
+        lower.contains('projet') ||
+        lower.contains('project')) {
       return Icons.edit_outlined;
     }
     return Icons.edit_outlined;
   }
 
-  Widget _choiceLabel(String fieldLabel, String value) {
+  Widget _choiceLabel(
+    String fieldLabel,
+    String value, {
+    String Function(String)? translate,
+  }) {
     final lower = fieldLabel.toLowerCase();
+    final labelOf = translate ?? tr;
     late final IconData icon;
     if (lower.contains('catégorie') ||
         lower.contains('categorie') ||
-        lower.contains('charge')) {
+        lower.contains('category') ||
+        lower.contains('charge') ||
+        lower.contains('bill')) {
       icon = categoryIcon(value);
     } else if (lower.contains('portefeuille') ||
+        lower.contains('wallet') ||
         lower == 'depuis' ||
+        lower == 'from' ||
         lower == 'vers' ||
+        lower == 'to' ||
         lower.contains('destination')) {
       icon = Icons.account_balance_wallet_outlined;
-    } else if (lower.contains('fréquence') || lower.contains('frequence')) {
+    } else if (lower.contains('fréquence') ||
+        lower.contains('frequence') ||
+        lower.contains('frequency')) {
       icon = switch (value) {
         'Mensuelle' => Icons.calendar_month_outlined,
         'Annuelle' => Icons.event_repeat_outlined,
@@ -734,7 +888,7 @@ class _DashboardState extends State<Dashboard> with WidgetsBindingObserver {
       children: [
         Icon(icon, size: 18, color: emerald),
         const SizedBox(width: 10),
-        Expanded(child: Text(value, overflow: TextOverflow.ellipsis)),
+        Expanded(child: Text(labelOf(value), overflow: TextOverflow.ellipsis)),
       ],
     );
   }
@@ -917,15 +1071,12 @@ class _DashboardState extends State<Dashboard> with WidgetsBindingObserver {
     }
 
     final isIncome = initialType == 'Revenu';
-    final categoryChoices = isIncome
-        ? [
-            ...incomeCategories,
-            ...categories.where((c) => !incomeCategories.contains(c)),
-          ]
-        : [
-            ...expenseCategories,
-            ...categories.where((c) => !expenseCategories.contains(c)),
-          ];
+    final categoryChoices = categoriesForTransaction(
+      isIncome: isIncome,
+      stored: categories,
+      extraExpenses: extraExpenseCategories,
+      extraIncomes: extraIncomeCategories,
+    );
     final values = await form(
       isIncome ? 'Nouveau revenu' : 'Nouvelle dépense',
       [
@@ -1083,17 +1234,17 @@ class _DashboardState extends State<Dashboard> with WidgetsBindingObserver {
       context: context,
       builder: (context) => AlertDialog(
         title: Text('Supprimer ${walletName(wallet)} ?'),
-        content: const Text(
-          'Le portefeuille et ses opérations liées seront retirés de PocheNette.',
+        content: Text(
+          tr('Le portefeuille et ses opérations liées seront retirés de PocheNette.'),
         ),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context, false),
-            child: const Text('Annuler'),
+            child: Text(tr('Annuler')),
           ),
           FilledButton(
             onPressed: () => Navigator.pop(context, true),
-            child: const Text('Supprimer'),
+            child: Text(tr('Supprimer')),
           ),
         ],
       ),
@@ -1112,17 +1263,17 @@ class _DashboardState extends State<Dashboard> with WidgetsBindingObserver {
       context: context,
       builder: (context) => AlertDialog(
         title: Text('Supprimer ${goal['name']} ?'),
-        content: const Text(
-          'L’objectif et ses versements enregistrés seront retirés.',
+        content: Text(
+          tr('L’objectif et ses versements enregistrés seront retirés.'),
         ),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context, false),
-            child: const Text('Annuler'),
+            child: Text(tr('Annuler')),
           ),
           FilledButton(
             onPressed: () => Navigator.pop(context, true),
-            child: const Text('Supprimer'),
+            child: Text(tr('Supprimer')),
           ),
         ],
       ),
@@ -1151,8 +1302,8 @@ class _DashboardState extends State<Dashboard> with WidgetsBindingObserver {
     }
     final pin = await showPinSheet(
       context,
-      title: 'Désactiver le verrouillage',
-      subtitle: 'Confirme ton code pour retirer la protection.',
+      title: tr('Désactiver le verrouillage'),
+      subtitle: tr('Confirme ton code pour retirer la protection.'),
     );
     if (pin == null) return;
     if (!await lock.verifyPin(pin)) {
@@ -1179,7 +1330,9 @@ class _DashboardState extends State<Dashboard> with WidgetsBindingObserver {
         return;
       }
       setState(() => suppressAutoLock = true);
-      final ok = await lock.unlockWithBiometrics();
+      final ok = await lock.unlockWithBiometrics(
+        reason: tr('Déverrouille PocheNette avec ta biométrie'),
+      );
       if (!mounted) return;
       setState(() => suppressAutoLock = false);
       if (!ok) {
@@ -1199,27 +1352,6 @@ class _DashboardState extends State<Dashboard> with WidgetsBindingObserver {
     message('Biométrie désactivée.');
   }
 
-  Future<void> dialUssd(String provider) async {
-    final code = ussdCodes[provider];
-    if (code == null || code.isEmpty) {
-      message('Aucun code USSD configuré.');
-      return;
-    }
-    try {
-      await channel.invokeMethod<void>('dialUssd', code);
-    } on PlatformException {
-      message('Impossible d’ouvrir le composeur.');
-    }
-  }
-
-  Future<void> editUssd(String provider) async {
-    final values = await form('Code USSD · $provider', [
-      field('Code', initial: ussdCodes[provider] ?? ''),
-    ]);
-    if (values == null) return;
-    await change(() => ussdCodes[provider] = values[0]);
-  }
-
   String dateText(DateTime value) =>
       '${value.day}/${value.month}/${value.year}';
 
@@ -1231,8 +1363,8 @@ class _DashboardState extends State<Dashboard> with WidgetsBindingObserver {
     VoidCallback? onTap,
   }) => Card(
     child: ListTile(
-      title: Text(title, maxLines: 1, overflow: TextOverflow.ellipsis),
-      subtitle: Text(subtitle, maxLines: 3, overflow: TextOverflow.ellipsis),
+      title: Text(tr(title), maxLines: 1, overflow: TextOverflow.ellipsis),
+      subtitle: Text(tr(subtitle), maxLines: 3, overflow: TextOverflow.ellipsis),
       trailing:
           trailing ?? (onTap == null ? null : const Icon(Icons.chevron_right)),
       leading: leading,
@@ -1272,7 +1404,7 @@ class _DashboardState extends State<Dashboard> with WidgetsBindingObserver {
               alignment: Alignment.centerRight,
               child: Text(
                 op['delta'] == null
-                    ? 'Solde actualisé'
+                    ? tr('Solde actualisé')
                     : money(asInt(op['delta'])),
                 maxLines: 1,
                 textAlign: TextAlign.right,
@@ -1295,21 +1427,6 @@ class _DashboardState extends State<Dashboard> with WidgetsBindingObserver {
     Icons.savings_outlined,
     Icons.settings_outlined,
   ];
-  static const months = [
-    'Janvier',
-    'Février',
-    'Mars',
-    'Avril',
-    'Mai',
-    'Juin',
-    'Juillet',
-    'Août',
-    'Septembre',
-    'Octobre',
-    'Novembre',
-    'Décembre',
-  ];
-  static const periods = ['Jour', 'Semaine', 'Mois', 'Année', 'Tous'];
   int period = 2;
   String? selectedCategory;
 
@@ -1319,7 +1436,7 @@ class _DashboardState extends State<Dashboard> with WidgetsBindingObserver {
       children: [
         Expanded(
           child: Text(
-            title,
+            tr(title),
             style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 18),
           ),
         ),
@@ -1365,14 +1482,26 @@ class _DashboardState extends State<Dashboard> with WidgetsBindingObserver {
     }
     final now = DateTime.now();
     final remaining = total - upcoming;
+    // Légende : noms courts, 2 lignes max (~8 chips).
+    const maxLegendChips = 8;
+    const autresLegendKey = '__autres__';
+    final sortedExpenses = expenses.entries.toList()
+      ..sort((a, b) => b.value.compareTo(a.value));
+    final legendOverflow = sortedExpenses.length > maxLegendChips;
+    final legendVisible = legendOverflow
+        ? sortedExpenses.take(maxLegendChips - 1).toList()
+        : sortedExpenses;
+    final legendAutresKeys = legendOverflow
+        ? sortedExpenses.skip(maxLegendChips - 1).map((e) => e.key).toSet()
+        : <String>{};
     return [
       Wrap(
         alignment: WrapAlignment.center,
         spacing: 5,
         children: [
-          for (var i = 0; i < periods.length; i++)
+          for (var i = 0; i < l10n.periods.length; i++)
             ChoiceChip(
-              label: Text(periods[i]),
+              label: Text(l10n.periods[i]),
               labelStyle: const TextStyle(
                 fontSize: 12,
                 fontWeight: FontWeight.w700,
@@ -1394,10 +1523,10 @@ class _DashboardState extends State<Dashboard> with WidgetsBindingObserver {
           avatar: const Icon(Icons.calendar_today_outlined, size: 15),
           label: Text(switch (period) {
             0 => dateText(now),
-            1 => 'Semaine en cours',
-            2 => '${months[now.month - 1]} ${now.year}',
+            1 => tr('Semaine en cours'),
+            2 => '${l10n.month(now.month)} ${now.year}',
             3 => '${now.year}',
-            _ => 'Toutes les opérations',
+            _ => tr('Toutes les opérations'),
           }),
         ),
       ),
@@ -1426,9 +1555,9 @@ class _DashboardState extends State<Dashboard> with WidgetsBindingObserver {
                   padding: EdgeInsets.symmetric(vertical: 5),
                   child: SizedBox(width: 28, child: Divider(height: 1)),
                 ),
-                const Text(
-                  'Solde total',
-                  style: TextStyle(fontSize: 11, color: muted),
+                Text(
+                  tr('Solde total'),
+                  style: const TextStyle(fontSize: 11, color: muted),
                 ),
                 FittedBox(
                   child: Text(
@@ -1442,22 +1571,49 @@ class _DashboardState extends State<Dashboard> with WidgetsBindingObserver {
         ),
       ),
       if (expenses.isNotEmpty) ...[
-        const SizedBox(height: 12),
+        const SizedBox(height: 8),
         Wrap(
           alignment: WrapAlignment.center,
-          spacing: 6,
+          spacing: 4,
+          runSpacing: 2,
           children: [
-            for (final (index, entry) in expenses.entries.indexed)
+            for (final (index, entry) in legendVisible.indexed)
               FilterChip(
+                visualDensity: VisualDensity.compact,
+                materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                padding: EdgeInsets.zero,
+                labelPadding: const EdgeInsets.only(right: 6),
                 avatar: Icon(
                   categoryIcon(entry.key),
-                  size: 16,
+                  size: 14,
                   color: categoryColors[index % categoryColors.length],
                 ),
-                label: Text(entry.key),
+                label: Text(
+                  tr(shortCategoryLabel(entry.key)),
+                  style: const TextStyle(fontSize: 11),
+                ),
                 selected: selectedCategory == entry.key,
                 onSelected: (active) => setState(
                   () => selectedCategory = active ? entry.key : null,
+                ),
+              ),
+            if (legendOverflow)
+              FilterChip(
+                visualDensity: VisualDensity.compact,
+                materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                padding: EdgeInsets.zero,
+                labelPadding: const EdgeInsets.only(right: 6),
+                avatar: Icon(
+                  categoryIcon('Autre dépense'),
+                  size: 14,
+                  color: categoryColors[
+                      legendVisible.length % categoryColors.length],
+                ),
+                label: Text(tr('Autres'), style: const TextStyle(fontSize: 11)),
+                selected: selectedCategory == autresLegendKey,
+                onSelected: (active) => setState(
+                  () => selectedCategory =
+                      active ? autresLegendKey : null,
                 ),
               ),
           ],
@@ -1465,9 +1621,11 @@ class _DashboardState extends State<Dashboard> with WidgetsBindingObserver {
       ],
       const SizedBox(height: 18),
       SummaryPanel(
-        label: 'Reste après les charges du mois',
+        label: tr('Reste après les charges du mois'),
         amount: money(remaining),
-        footer: '${money(upcoming)} de charges à régler',
+        footer: l10n.isEnglish
+            ? '${money(upcoming)} in bills due'
+            : '${money(upcoming)} de charges à régler',
       ),
       if (remaining < 0)
         tile(
@@ -1488,7 +1646,7 @@ class _DashboardState extends State<Dashboard> with WidgetsBindingObserver {
             child: OutlinedButton.icon(
               onPressed: saving ? null : () => addTransaction(),
               icon: const Icon(Icons.remove),
-              label: const Text('Dépense'),
+              label: Text(tr('Dépense')),
               style: OutlinedButton.styleFrom(
                 foregroundColor: rose,
                 side: const BorderSide(color: rose),
@@ -1503,16 +1661,27 @@ class _DashboardState extends State<Dashboard> with WidgetsBindingObserver {
                   ? null
                   : () => addTransaction(initialType: 'Revenu'),
               icon: const Icon(Icons.add),
-              label: const Text('Revenu'),
+              label: Text(tr('Revenu')),
             ),
           ),
         ],
       ),
-      section(selectedCategory ?? 'Dernières opérations'),
+      section(
+        selectedCategory == null
+            ? 'Dernières opérations'
+            : selectedCategory == autresLegendKey
+                ? 'Autres'
+                : shortCategoryLabel(selectedCategory!),
+      ),
       ...history(
-        entries: entries.where(
-          (op) => selectedCategory == null || op['label'] == selectedCategory,
-        ),
+        entries: entries.where((op) {
+          if (selectedCategory == null) return true;
+          final label = op['label'] as String?;
+          if (selectedCategory == autresLegendKey) {
+            return label != null && legendAutresKeys.contains(label);
+          }
+          return label == selectedCategory;
+        }),
       ),
     ];
   }
@@ -1550,102 +1719,115 @@ class _DashboardState extends State<Dashboard> with WidgetsBindingObserver {
       isScrollControlled: true,
       useSafeArea: true,
       backgroundColor: Colors.transparent,
-      builder: (context) => Container(
-        margin: EdgeInsets.fromLTRB(12, 0, 12, 12 + safeBottom.clamp(0, 24)),
-        padding: const EdgeInsets.fromLTRB(22, 14, 22, 18),
-        decoration: BoxDecoration(
-          color: Colors.white,
-          borderRadius: BorderRadius.circular(32),
-          boxShadow: const [
-            BoxShadow(
-              color: Color(0x220f172a),
-              blurRadius: 28,
-              offset: Offset(0, 12),
-            ),
-          ],
-        ),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            Center(
-              child: Container(
-                width: 42,
-                height: 4,
-                decoration: BoxDecoration(
-                  color: border,
-                  borderRadius: BorderRadius.circular(99),
-                ),
+      builder: (context) {
+        final sheetTr = context.l10n.t;
+        return Container(
+          margin: EdgeInsets.fromLTRB(12, 0, 12, 12 + safeBottom.clamp(0, 24)),
+          padding: const EdgeInsets.fromLTRB(22, 14, 22, 18),
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(32),
+            boxShadow: const [
+              BoxShadow(
+                color: Color(0x220f172a),
+                blurRadius: 28,
+                offset: Offset(0, 12),
               ),
-            ),
-            const SizedBox(height: 18),
-            Row(
-              children: [
-                IconPlate(
-                  op['sms'] == true
-                      ? Icons.sms_outlined
-                      : op['transfer'] == true
-                      ? Icons.swap_horiz_outlined
-                      : categoryIcon(op['label'] as String?),
-                  color: delta < 0 ? rose : emerald,
-                ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        op['label'] as String? ?? 'Opération',
-                        style: const TextStyle(
-                          fontSize: 20,
-                          fontWeight: FontWeight.w800,
-                        ),
-                      ),
-                      const SizedBox(height: 4),
-                      Row(
-                        children: [
-                          Icon(
-                            type == 'Revenu'
-                                ? Icons.trending_up_outlined
-                                : type == 'Transfert'
-                                ? Icons.swap_horiz_outlined
-                                : Icons.trending_down_outlined,
-                            size: 16,
-                            color: muted,
-                          ),
-                          const SizedBox(width: 6),
-                          Text(type, style: const TextStyle(color: muted)),
-                        ],
-                      ),
-                    ],
+            ],
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Center(
+                child: Container(
+                  width: 42,
+                  height: 4,
+                  decoration: BoxDecoration(
+                    color: border,
+                    borderRadius: BorderRadius.circular(99),
                   ),
                 ),
-              ],
-            ),
-            const SizedBox(height: 18),
-            Text(
-              op['delta'] == null ? 'Solde actualisé' : money(delta),
-              style: numberStyle.copyWith(
-                fontSize: 28,
-                color: delta < 0 ? rose : emerald,
               ),
-            ),
-            const SizedBox(height: 16),
-            _detailRow(
-              'Portefeuille',
-              wallet == null ? 'Inconnu' : walletName(wallet),
-            ),
-            _detailRow('Date', '${dateText(at)} · ${at.hour.toString().padLeft(2, '0')}:${at.minute.toString().padLeft(2, '0')}'),
-            if (op['sms'] == true) _detailRow('Source', 'Reçu SMS Mobile Money'),
-            if (note.isNotEmpty) _detailRow('Détails', note),
-            const SizedBox(height: 12),
-            FilledButton(
-              onPressed: () => Navigator.pop(context),
-              child: const Text('Fermer'),
-            ),
-          ],
-        ),
-      ),
+              const SizedBox(height: 18),
+              Row(
+                children: [
+                  IconPlate(
+                    op['sms'] == true
+                        ? Icons.sms_outlined
+                        : op['transfer'] == true
+                        ? Icons.swap_horiz_outlined
+                        : categoryIcon(op['label'] as String?),
+                    color: delta < 0 ? rose : emerald,
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          sheetTr(op['label'] as String? ?? 'Opération'),
+                          style: const TextStyle(
+                            fontSize: 20,
+                            fontWeight: FontWeight.w800,
+                          ),
+                        ),
+                        const SizedBox(height: 4),
+                        Row(
+                          children: [
+                            Icon(
+                              type == 'Revenu'
+                                  ? Icons.trending_up_outlined
+                                  : type == 'Transfert'
+                                  ? Icons.swap_horiz_outlined
+                                  : Icons.trending_down_outlined,
+                              size: 16,
+                              color: muted,
+                            ),
+                            const SizedBox(width: 6),
+                            Text(
+                              sheetTr(type),
+                              style: const TextStyle(color: muted),
+                            ),
+                          ],
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 18),
+              Text(
+                op['delta'] == null ? sheetTr('Solde actualisé') : money(delta),
+                style: numberStyle.copyWith(
+                  fontSize: 28,
+                  color: delta < 0 ? rose : emerald,
+                ),
+              ),
+              const SizedBox(height: 16),
+              _detailRow(
+                sheetTr('Portefeuille'),
+                wallet == null ? sheetTr('Inconnu') : walletName(wallet),
+              ),
+              _detailRow(
+                sheetTr('Date'),
+                '${dateText(at)} · ${at.hour.toString().padLeft(2, '0')}:${at.minute.toString().padLeft(2, '0')}',
+              ),
+              if (op['sms'] == true)
+                _detailRow(
+                  sheetTr('Source'),
+                  sheetTr('Reçu SMS Mobile Money'),
+                ),
+              if (note.isNotEmpty) _detailRow(sheetTr('Détails'), note),
+              const SizedBox(height: 12),
+              FilledButton(
+                onPressed: () => Navigator.pop(context),
+                child: Text(sheetTr('Fermer')),
+              ),
+            ],
+          ),
+        );
+      },
     );
   }
 
@@ -1675,9 +1857,11 @@ class _DashboardState extends State<Dashboard> with WidgetsBindingObserver {
       case 1:
         return [
           SummaryPanel(
-            label: 'Solde de tes portefeuilles',
+            label: tr('Solde de tes portefeuilles'),
             amount: money(total),
-            footer: '${wallets.length} portefeuille(s) · FCFA',
+            footer: l10n.isEnglish
+              ? '${wallets.length} wallet(s) · FCFA'
+              : '${wallets.length} portefeuille(s) · FCFA',
           ),
           section('Mes portefeuilles'),
           if (wallets.isEmpty)
@@ -1713,15 +1897,6 @@ class _DashboardState extends State<Dashboard> with WidgetsBindingObserver {
                         amount: money(balance(wallet)),
                         footer: walletName(wallet),
                       ),
-                      if (ussdCodes.containsKey(wallet['provider']))
-                        FilledButton.tonalIcon(
-                          onPressed: () =>
-                              dialUssd(wallet['provider'] as String),
-                          icon: const Icon(Icons.dialpad),
-                          label: Text(
-                            'USSD ${ussdCodes[wallet['provider']]}',
-                          ),
-                        ),
                       section('Historique'),
                       ...history(wallet: wallet['id'] as String),
                       const SizedBox(height: 8),
@@ -1733,9 +1908,9 @@ class _DashboardState extends State<Dashboard> with WidgetsBindingObserver {
                                 await deleteWallet(wallet);
                               },
                         icon: const Icon(Icons.delete_outline, color: rose),
-                        label: const Text(
-                          'Supprimer ce portefeuille',
-                          style: TextStyle(color: rose),
+                        label: Text(
+                          tr('Supprimer ce portefeuille'),
+                          style: const TextStyle(color: rose),
                         ),
                       ),
                     ],
@@ -1746,16 +1921,18 @@ class _DashboardState extends State<Dashboard> with WidgetsBindingObserver {
           FilledButton.icon(
             onPressed: saving ? null : addWallet,
             icon: const Icon(Icons.add),
-            label: const Text('Ajouter un portefeuille'),
+            label: Text(tr('Ajouter un portefeuille')),
           ),
         ];
       case 2:
         final now = DateTime.now();
         return [
           SummaryPanel(
-            label: 'Charges à régler ce mois-ci',
+            label: tr('Charges à régler ce mois-ci'),
             amount: money(upcoming),
-            footer: 'Reste après les charges · ${money(total - upcoming)}',
+            footer: l10n.isEnglish
+                ? 'Left after bills · ${money(total - upcoming)}'
+                : 'Reste après les charges · ${money(total - upcoming)}',
           ),
           section(
             'Prochaines échéances',
@@ -1770,7 +1947,9 @@ class _DashboardState extends State<Dashboard> with WidgetsBindingObserver {
                 ),
               ),
               child: Text(
-                'Calendrier · ${months[now.month - 1]}',
+                l10n.isEnglish
+                    ? 'Calendar · ${l10n.month(now.month)}'
+                    : 'Calendrier · ${l10n.month(now.month)}',
                 style: const TextStyle(fontSize: 12),
               ),
             ),
@@ -1784,11 +1963,11 @@ class _DashboardState extends State<Dashboard> with WidgetsBindingObserver {
           for (final charge in charges)
             tile(
               charge['name'] as String,
-              '${money(charge['amount'] as int)} · ${dateText(DateTime.parse(charge['date'] as String))}\n${charge['frequency']} · ${charge['wallet']}',
+              '${money(charge['amount'] as int)} · ${dateText(DateTime.parse(charge['date'] as String))}\n${tr(charge['frequency'] as String)} · ${charge['wallet']}',
               leading: IconPlate(categoryIcon(charge['name'] as String?)),
               onTap: () => editCharge(charge),
               trailing: IconButton(
-                tooltip: 'Gérer l’échéance',
+                tooltip: tr('Gérer l’échéance'),
                 onPressed: saving ? null : () => resolveCharge(charge),
                 icon: const Icon(Icons.more_vert),
               ),
@@ -1796,7 +1975,7 @@ class _DashboardState extends State<Dashboard> with WidgetsBindingObserver {
           FilledButton.icon(
             onPressed: saving ? null : () => editCharge(),
             icon: const Icon(Icons.add),
-            label: const Text('Ajouter une charge'),
+            label: Text(tr('Ajouter une charge')),
           ),
         ];
       case 3:
@@ -1866,13 +2045,13 @@ class _DashboardState extends State<Dashboard> with WidgetsBindingObserver {
                     ),
                   TextButton(
                     onPressed: saving ? null : () => contribute(goal),
-                    child: const Text('Ajouter un versement'),
+                    child: Text(tr('Ajouter un versement')),
                   ),
                   TextButton(
                     onPressed: saving ? null : () => deleteGoal(goal),
-                    child: const Text(
-                      'Supprimer l’objectif',
-                      style: TextStyle(color: rose),
+                    child: Text(
+                      tr('Supprimer l’objectif'),
+                      style: const TextStyle(color: rose),
                     ),
                   ),
                 ],
@@ -1881,15 +2060,55 @@ class _DashboardState extends State<Dashboard> with WidgetsBindingObserver {
           FilledButton.icon(
             onPressed: saving ? null : addGoal,
             icon: const Icon(Icons.add),
-            label: const Text('Nouvel objectif'),
+            label: Text(tr('Nouvel objectif')),
           ),
         ];
       default:
+        final currentLocale = localeCode ?? Localizations.localeOf(context).languageCode;
         return [
-          tile(
-            'Données sur cet appareil',
-            'Soldes, historique et réglages sont stockés localement.',
-            leading: const IconPlate(Icons.lock_outline),
+          section('Langue'),
+          Row(
+            children: [
+              Expanded(
+                child: _LanguageChip(
+                  flag: '🇫🇷',
+                  label: tr('Français'),
+                  selected: !currentLocale.startsWith('en'),
+                  onTap: saving ? null : () => setAppLocale('fr'),
+                ),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: _LanguageChip(
+                  flag: '🇬🇧',
+                  label: 'English',
+                  selected: currentLocale.startsWith('en'),
+                  onTap: saving ? null : () => setAppLocale('en'),
+                ),
+              ),
+            ],
+          ),
+          section('Changer de téléphone'),
+          Row(
+            children: [
+              Expanded(
+                child: _SettingsPairCard(
+                  icon: Icons.qr_code_2_rounded,
+                  title: tr('Envoyer'),
+                  subtitle: tr('Afficher le QR'),
+                  onTap: saving ? null : openTransferExport,
+                ),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: _SettingsPairCard(
+                  icon: Icons.qr_code_scanner_rounded,
+                  title: tr('Recevoir'),
+                  subtitle: tr('Scanner le QR'),
+                  onTap: saving ? null : openTransferImport,
+                ),
+              ),
+            ],
           ),
           section('Sécurité'),
           Card(
@@ -1906,9 +2125,9 @@ class _DashboardState extends State<Dashboard> with WidgetsBindingObserver {
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            const Text(
-                              'Protection de l’app',
-                              style: TextStyle(
+                            Text(
+                              tr('Protection de l’app'),
+                              style: const TextStyle(
                                 fontWeight: FontWeight.w800,
                                 fontSize: 16,
                               ),
@@ -1916,8 +2135,10 @@ class _DashboardState extends State<Dashboard> with WidgetsBindingObserver {
                             const SizedBox(height: 4),
                             Text(
                               lockEnabled
-                                  ? 'Code PIN actif${biometricEnabled ? ' · biométrie on' : ''}'
-                                  : 'Aucun verrouillage pour l’instant',
+                                  ? (l10n.isEnglish
+                                      ? 'PIN enabled${biometricEnabled ? ' · biometrics on' : ''}'
+                                      : 'Code PIN actif${biometricEnabled ? ' · biométrie on' : ''}')
+                                  : tr('Aucun verrouillage pour l’instant'),
                               style: const TextStyle(color: muted, fontSize: 13),
                             ),
                           ],
@@ -1930,12 +2151,12 @@ class _DashboardState extends State<Dashboard> with WidgetsBindingObserver {
                         ),
                         decoration: BoxDecoration(
                           color: lockEnabled
-                              ? const Color(0xffc5f6e3)
+                              ? mintWash
                               : const Color(0xfff1f5f9),
                           borderRadius: BorderRadius.circular(99),
                         ),
                         child: Text(
-                          lockEnabled ? 'Actif' : 'Off',
+                          lockEnabled ? tr('Actif') : tr('Off'),
                           style: TextStyle(
                             color: lockEnabled ? emerald : muted,
                             fontWeight: FontWeight.w800,
@@ -1955,8 +2176,8 @@ class _DashboardState extends State<Dashboard> with WidgetsBindingObserver {
                           : () => toggleAppLock(!lockEnabled),
                       child: Text(
                         lockEnabled
-                            ? 'Désactiver le verrouillage'
-                            : 'Définir un code PIN',
+                            ? tr('Désactiver le verrouillage')
+                            : tr('Définir un code PIN'),
                       ),
                     ),
                   ),
@@ -1965,23 +2186,23 @@ class _DashboardState extends State<Dashboard> with WidgetsBindingObserver {
                     SwitchListTile(
                       contentPadding: EdgeInsets.zero,
                       secondary: const Icon(Icons.fingerprint, color: emerald),
-                      title: const Text('Biométrie'),
-                      subtitle: const Text('Empreinte ou visage'),
+                      title: Text(tr('Biométrie')),
+                      subtitle: Text(tr('Empreinte ou visage')),
                       value: biometricEnabled,
                       onChanged: saving ? null : toggleBiometric,
                     ),
                     ListTile(
                       contentPadding: EdgeInsets.zero,
                       leading: const Icon(Icons.password_outlined, color: emerald),
-                      title: const Text('Changer le code PIN'),
+                      title: Text(tr('Changer le code PIN')),
                       trailing: const Icon(Icons.chevron_right_rounded),
                       onTap: saving
                           ? null
                           : () async {
                               final current = await showPinSheet(
                                 context,
-                                title: 'Code actuel',
-                                subtitle: 'Entre ton code pour continuer.',
+                                title: tr('Code actuel'),
+                                subtitle: tr('Entre ton code pour continuer.'),
                               );
                               if (current == null) return;
                               if (!await lock.verifyPin(current)) {
@@ -2007,104 +2228,104 @@ class _DashboardState extends State<Dashboard> with WidgetsBindingObserver {
           ),
           section('Alertes'),
           Card(
-            child: SwitchListTile(
-              secondary: const IconPlate(Icons.notifications_outlined),
-              title: const Text('Notifications locales'),
-              subtitle: const Text(
-                'Rappels d’échéances et alertes de seuil.',
-              ),
-              value: alertsEnabled,
-              onChanged: saving
-                  ? null
-                  : (value) async {
-                      if (value) {
-                        await setupNotifications(requestPermission: true);
-                      }
-                      await change(() => alertsEnabled = value);
-                    },
+            child: Column(
+              children: [
+                SwitchListTile(
+                  secondary: const Icon(Icons.notifications_outlined, color: emerald),
+                  title: Text(tr('Notifications')),
+                  subtitle: Text(tr('Échéances et seuils')),
+                  value: alertsEnabled,
+                  onChanged: saving
+                      ? null
+                      : (value) async {
+                          if (value) {
+                            await setupNotifications(requestPermission: true);
+                          }
+                          await change(() => alertsEnabled = value);
+                        },
+                ),
+                const Divider(height: 1),
+                SwitchListTile(
+                  secondary: const Icon(Icons.warning_amber_rounded, color: emerald),
+                  title: Text(tr('Seuil de solde')),
+                  subtitle: Text(
+                    thresholdEnabled
+                        ? (l10n.isEnglish
+                            ? 'Under ${money(thresholdAmount)}'
+                            : 'Sous ${money(thresholdAmount)}')
+                        : tr('Désactivé'),
+                  ),
+                  value: thresholdEnabled,
+                  onChanged: saving
+                      ? null
+                      : (value) async {
+                          if (value) {
+                            await setupNotifications(requestPermission: true);
+                            final values = await form('Seuil d’alerte', [
+                              field(
+                                'Montant en FCFA',
+                                number: true,
+                                initial: thresholdAmount.toString(),
+                              ),
+                            ]);
+                            if (values == null) return;
+                            await change(() {
+                              thresholdEnabled = true;
+                              thresholdAmount = int.parse(values[0]);
+                            });
+                            await refreshAlerts();
+                            return;
+                          }
+                          await change(() => thresholdEnabled = false);
+                        },
+                ),
+              ],
             ),
           ),
+          section('Mobile Money'),
           Card(
             child: SwitchListTile(
-              secondary: const IconPlate(Icons.warning_amber_rounded),
-              title: const Text('Seuil de solde'),
+              secondary: const Icon(Icons.sms_outlined, color: emerald),
+              title: Text(tr('Lecture SMS auto')),
               subtitle: Text(
-                thresholdEnabled
-                    ? 'Alerte sous ${money(thresholdAmount)}'
-                    : 'Désactivé',
-              ),
-              value: thresholdEnabled,
-              onChanged: saving
-                  ? null
-                  : (value) async {
-                      if (value) {
-                        await setupNotifications(requestPermission: true);
-                        final values = await form('Seuil d’alerte', [
-                          field(
-                            'Montant en FCFA',
-                            number: true,
-                            initial: thresholdAmount.toString(),
-                          ),
-                        ]);
-                        if (values == null) return;
-                        await change(() {
-                          thresholdEnabled = true;
-                          thresholdAmount = int.parse(values[0]);
-                        });
-                        await refreshAlerts();
-                        return;
-                      }
-                      await change(() => thresholdEnabled = false);
-                    },
-            ),
-          ),
-          section('Synchronisation Mobile Money'),
-          Card(
-            child: SwitchListTile(
-              secondary: const IconPlate(Icons.sms_outlined),
-              title: const Text('Lecture automatique des SMS'),
-              subtitle: const Text(
-                'Reçus Orange Money et MTN MoMo. Traitement sur ce téléphone.',
+                tr(
+                  isIos
+                      ? 'Indisponible sur iOS'
+                      : 'Orange Money et MTN MoMo',
+                ),
               ),
               value: enabled,
               onChanged: saving ? null : (_) => toggleSms(),
             ),
           ),
           if (enabled)
-            tile(
-              syncing ? 'Lecture des reçus…' : 'Actualiser les soldes',
-              'Vérifier les nouveaux SMS Mobile Money.',
-              leading: syncing
-                  ? const SizedBox.square(
-                      dimension: 24,
-                      child: CircularProgressIndicator(strokeWidth: 2),
-                    )
-                  : const IconPlate(Icons.sync),
-              onTap: syncing ? null : () => sync(manual: true),
-            ),
-          section('Codes USSD'),
-          for (final provider in ['Orange Money', 'MTN MoMo'])
-            tile(
-              provider,
-              ussdCodes[provider] ?? 'Non défini',
-              leading: providerMark(provider),
-              trailing: IconButton(
-                tooltip: 'Composer',
-                onPressed: () => dialUssd(provider),
-                icon: const Icon(Icons.dialpad),
+            Padding(
+              padding: const EdgeInsets.only(top: 8),
+              child: OutlinedButton.icon(
+                onPressed: syncing ? null : () => sync(manual: true),
+                icon: syncing
+                    ? const SizedBox.square(
+                        dimension: 16,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    : const Icon(Icons.sync),
+                label: Text(
+                  syncing ? tr('Lecture…') : tr('Actualiser les soldes'),
+                ),
               ),
-              onTap: () => editUssd(provider),
             ),
           section('Comptes et budget'),
           tile(
-            'Devise principale',
-            'Franc CFA d’Afrique centrale',
+            'Devise',
+            'Franc CFA (Afrique centrale)',
             leading: const IconPlate(Icons.payments_outlined),
             trailing: const Chip(label: Text('XAF')),
           ),
           tile(
             'Catégories',
-            '${expenseCategories.length} dépenses · ${incomeCategories.length} revenus',
+            l10n.isEnglish
+                ? '${expenseCategories.length} expenses · ${incomeCategories.length} income'
+                : '${expenseCategories.length} dépenses · ${incomeCategories.length} revenus',
             leading: const IconPlate(Icons.category_outlined),
             trailing: const Icon(Icons.chevron_right),
             onTap: () async {
@@ -2119,38 +2340,70 @@ class _DashboardState extends State<Dashboard> with WidgetsBindingObserver {
                 ],
                 subtitle: 'Ex. tontine, maquis, salaire…',
               );
-              if (values != null && !categories.contains(values[1])) {
-                await change(() => categories.add(values[1]));
-                message('Catégorie « ${values[1]} » ajoutée.');
+              if (values != null) {
+                final name = values[1].trim();
+                final asExpense = values[0] == 'Dépense';
+                if (name.isEmpty) return;
+                await change(() {
+                  if (!categories.contains(name)) categories.add(name);
+                  if (asExpense) {
+                    if (!extraExpenseCategories.contains(name)) {
+                      extraExpenseCategories.add(name);
+                    }
+                    extraIncomeCategories.remove(name);
+                  } else {
+                    if (!extraIncomeCategories.contains(name)) {
+                      extraIncomeCategories.add(name);
+                    }
+                    extraExpenseCategories.remove(name);
+                  }
+                });
+                message(
+                  l10n.isEnglish
+                      ? 'Category « $name » added.'
+                      : 'Catégorie « $name » ajoutée.',
+                );
               }
             },
           ),
-          tile(
-            'Calendrier des échéances',
-            'Voir le mois en cours',
-            leading: const IconPlate(Icons.calendar_month_outlined),
-            onTap: () => Navigator.push(
-              context,
-              MaterialPageRoute<void>(
-                builder: (_) =>
-                    ChargesCalendarPage(charges: charges, money: money),
-              ),
-            ),
-          ),
-          tile(
-            'Statistiques avancées',
-            'Répartition du mois',
-            leading: const IconPlate(Icons.insights_outlined),
-            onTap: () => Navigator.push(
-              context,
-              MaterialPageRoute<void>(
-                builder: (_) => StatsPage(
-                  operations: operations,
-                  money: money,
-                  categories: categories,
+          const SizedBox(height: 4),
+          Row(
+            children: [
+              Expanded(
+                child: _SettingsPairCard(
+                  icon: Icons.calendar_month_outlined,
+                  title: tr('Calendrier'),
+                  subtitle: tr('Échéances'),
+                  onTap: () => Navigator.push(
+                    context,
+                    MaterialPageRoute<void>(
+                      builder: (_) => ChargesCalendarPage(
+                        charges: charges,
+                        money: money,
+                      ),
+                    ),
+                  ),
                 ),
               ),
-            ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: _SettingsPairCard(
+                  icon: Icons.insights_outlined,
+                  title: tr('Stats'),
+                  subtitle: tr('Répartition'),
+                  onTap: () => Navigator.push(
+                    context,
+                    MaterialPageRoute<void>(
+                      builder: (_) => StatsPage(
+                        operations: operations,
+                        money: money,
+                        categories: categories,
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ],
           ),
         ];
     }
@@ -2162,7 +2415,7 @@ class _DashboardState extends State<Dashboard> with WidgetsBindingObserver {
       return Scaffold(
         body: Center(
           child: loadFailed
-              ? const Text('Impossible de charger les données.')
+              ? Text(tr('Impossible de charger les données.'))
               : const CircularProgressIndicator(),
         ),
       );
@@ -2200,14 +2453,14 @@ class _DashboardState extends State<Dashboard> with WidgetsBindingObserver {
             : Icon(pageIcons[tab]),
         titleSpacing: 4,
         title: Text(
-          tab == 0 ? 'PocheNette' : titles[tab],
+          tab == 0 ? 'PocheNette' : l10n.tabTitles[tab],
           maxLines: 1,
           overflow: TextOverflow.ellipsis,
         ),
         actions: [
           if (tab == 0)
             IconButton(
-              tooltip: 'Transfert',
+              tooltip: tr('Transfert'),
               onPressed: saving || wallets.length < 2
                   ? null
                   : () => addTransaction(initialType: 'Transfert'),
@@ -2215,12 +2468,12 @@ class _DashboardState extends State<Dashboard> with WidgetsBindingObserver {
             ),
           if (tab == 4 && enabled)
             IconButton(
-              tooltip: 'Actualiser les soldes',
+              tooltip: tr('Actualiser les soldes'),
               onPressed: () => sync(manual: true),
               icon: const Icon(Icons.sync),
             ),
           IconButton(
-            tooltip: 'Guide rapide',
+            tooltip: tr('Guide rapide'),
             onPressed: () => showPageGuide(context, tab),
             icon: const Icon(Icons.help_outline),
           ),
@@ -2249,7 +2502,7 @@ class _DashboardState extends State<Dashboard> with WidgetsBindingObserver {
           ? FloatingActionButton.extended(
               onPressed: saving ? null : addTransaction,
               icon: const Icon(Icons.add),
-              label: const Text('Transaction'),
+              label: Text(tr('Transaction')),
             )
           : null,
       bottomNavigationBar: Material(
@@ -2264,31 +2517,139 @@ class _DashboardState extends State<Dashboard> with WidgetsBindingObserver {
             selectedIndex: tab,
             onDestinationSelected: (value) => setState(() => tab = value),
             labelBehavior: NavigationDestinationLabelBehavior.alwaysShow,
-            destinations: const [
+            destinations: [
               NavigationDestination(
-                icon: Icon(Icons.home_outlined),
-                selectedIcon: Icon(Icons.home),
-                label: 'Accueil',
+                icon: const Icon(Icons.home_outlined),
+                selectedIcon: const Icon(Icons.home),
+                label: l10n.navLabels[0],
               ),
               NavigationDestination(
-                icon: Icon(Icons.account_balance_wallet_outlined),
-                selectedIcon: Icon(Icons.account_balance_wallet),
-                label: 'Poches',
+                icon: const Icon(Icons.account_balance_wallet_outlined),
+                selectedIcon: const Icon(Icons.account_balance_wallet),
+                label: l10n.navLabels[1],
               ),
               NavigationDestination(
-                icon: Icon(Icons.event_outlined),
-                selectedIcon: Icon(Icons.event),
-                label: 'Charges',
+                icon: const Icon(Icons.event_outlined),
+                selectedIcon: const Icon(Icons.event),
+                label: l10n.navLabels[2],
               ),
               NavigationDestination(
-                icon: Icon(Icons.savings_outlined),
-                selectedIcon: Icon(Icons.savings),
-                label: 'Épargne',
+                icon: const Icon(Icons.savings_outlined),
+                selectedIcon: const Icon(Icons.savings),
+                label: l10n.navLabels[3],
               ),
               NavigationDestination(
-                icon: Icon(Icons.settings_outlined),
-                selectedIcon: Icon(Icons.settings),
-                label: 'Réglages',
+                icon: const Icon(Icons.settings_outlined),
+                selectedIcon: const Icon(Icons.settings),
+                label: l10n.navLabels[4],
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+
+class _LanguageChip extends StatelessWidget {
+  const _LanguageChip({
+    required this.flag,
+    required this.label,
+    required this.selected,
+    required this.onTap,
+  });
+
+  final String flag;
+  final String label;
+  final bool selected;
+  final VoidCallback? onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: selected ? mintWash : Colors.white,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(18),
+        side: BorderSide(color: selected ? emerald : border, width: selected ? 1.6 : 1),
+      ),
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(18),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 14),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Text(flag, style: const TextStyle(fontSize: 22)),
+              const SizedBox(width: 8),
+              Flexible(
+                child: Text(
+                  label,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    fontWeight: FontWeight.w800,
+                    color: selected ? emerald : ink,
+                  ),
+                ),
+              ),
+              if (selected) ...[
+                const SizedBox(width: 6),
+                const Icon(Icons.check_rounded, size: 18, color: emerald),
+              ],
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+
+class _SettingsPairCard extends StatelessWidget {
+  const _SettingsPairCard({
+    required this.icon,
+    required this.title,
+    required this.subtitle,
+    required this.onTap,
+  });
+
+  final IconData icon;
+  final String title;
+  final String subtitle;
+  final VoidCallback? onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: Colors.white,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(18),
+        side: const BorderSide(color: border),
+      ),
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(18),
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(14, 14, 14, 14),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Icon(icon, color: emerald, size: 22),
+              const SizedBox(height: 10),
+              Text(
+                title,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 15),
+              ),
+              const SizedBox(height: 2),
+              Text(
+                subtitle,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(color: muted, fontSize: 12),
               ),
             ],
           ),

@@ -2,13 +2,18 @@ import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 
-const emerald = Color(0xff006c49);
-const mint = Color(0xff10b981);
-const ink = Color(0xff0f172a);
+/// Palette logo PocheNette — navy + vert croissance.
+const navy = Color(0xff001B3D);
+const navyMid = Color(0xff0A3A6B);
+const navyDeep = Color(0xff000F24);
+const emerald = Color(0xff00B87A);
+const mint = Color(0xff2EE2A2);
+const mintWash = Color(0xffD4F8EA);
+const ink = Color(0xff0B1A2E);
 const muted = Color(0xff526278);
 const rose = Color(0xffd81c50);
-const canvas = Color(0xfff8fafc);
-const border = Color(0xffe2e8f0);
+const canvas = Color(0xffF5F8FC);
+const border = Color(0xffE2E8F0);
 const categoryColors = [
   Color(0xfffb7185),
   Color(0xff38bdf8),
@@ -27,8 +32,8 @@ ThemeData pocheTheme() {
     seedColor: emerald,
     primary: emerald,
     onPrimary: Colors.white,
-    secondaryContainer: const Color(0xffc5f6e3),
-    onSecondaryContainer: emerald,
+    secondaryContainer: mintWash,
+    onSecondaryContainer: navy,
     surface: Colors.white,
     onSurface: ink,
     onSurfaceVariant: muted,
@@ -40,7 +45,7 @@ ThemeData pocheTheme() {
     fontFamily: 'Plus Jakarta Sans',
     scaffoldBackgroundColor: canvas,
     appBarTheme: const AppBarTheme(
-      backgroundColor: emerald,
+      backgroundColor: navy,
       foregroundColor: Colors.white,
       surfaceTintColor: Colors.transparent,
       titleTextStyle: TextStyle(
@@ -65,7 +70,7 @@ ThemeData pocheTheme() {
       backgroundColor: Colors.white,
       elevation: 0,
       height: 72,
-      indicatorColor: Color(0xffc5f6e3),
+      indicatorColor: mintWash,
       labelTextStyle: WidgetStatePropertyAll(
         TextStyle(fontSize: 11, fontWeight: FontWeight.w700),
       ),
@@ -140,7 +145,7 @@ class SummaryPanel extends StatelessWidget {
     padding: const EdgeInsets.fromLTRB(18, 18, 18, 16),
     decoration: BoxDecoration(
       gradient: const LinearGradient(
-        colors: [Color(0xff004c37), Color(0xff087f59)],
+        colors: [navy, navyMid],
         begin: Alignment.bottomLeft,
         end: Alignment.topRight,
       ),
@@ -154,7 +159,7 @@ class SummaryPanel extends StatelessWidget {
           maxLines: 2,
           overflow: TextOverflow.ellipsis,
           style: const TextStyle(
-            color: Color(0xffa5f3d0),
+            color: mint,
             fontWeight: FontWeight.w700,
             height: 1.25,
           ),
@@ -173,8 +178,8 @@ class SummaryPanel extends StatelessWidget {
           const SizedBox(height: 14),
           PocheProgress(
             value: progress!,
-            color: const Color(0xffa5f3d0),
-            track: const Color(0xff004c37),
+            color: mint,
+            track: navyDeep,
           ),
         ],
         const SizedBox(height: 10),
@@ -182,8 +187,8 @@ class SummaryPanel extends StatelessWidget {
           footer,
           maxLines: 2,
           overflow: TextOverflow.ellipsis,
-          style: const TextStyle(
-            color: Color(0xffd1fae5),
+          style: TextStyle(
+            color: Colors.white.withValues(alpha: .78),
             fontSize: 12,
             height: 1.35,
           ),

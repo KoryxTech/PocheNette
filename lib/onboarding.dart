@@ -1,25 +1,29 @@
 import 'package:flutter/material.dart';
 
 import 'design.dart';
+import 'l10n/l10n.dart';
 
-const onboardingPages = [
+List<({IconData icon, String title, String body})> onboardingPages(L10n l10n) => [
   (
     icon: Icons.account_balance_wallet_outlined,
-    title: 'Tes poches, en un coup d’œil',
-    body:
-        'Centralise Orange Money, MTN MoMo, Wave, espèces et banques. Suis ton solde total en FCFA sans quitter ton téléphone.',
+    title: l10n.t('Tes poches, en un coup d’œil'),
+    body: l10n.t(
+      'Centralise Orange Money, MTN MoMo, Wave, espèces et banques. Suis ton solde total en FCFA sans quitter ton téléphone.',
+    ),
   ),
   (
     icon: Icons.sms_outlined,
-    title: 'SMS optionnels, données locales',
-    body:
-        'Active la lecture des reçus Mobile Money si tu veux. Tout reste sur cet appareil : pas de compte, pas d’abonnement.',
+    title: l10n.t('SMS optionnels, données locales'),
+    body: l10n.t(
+      'Active la lecture des reçus Mobile Money si tu veux. Tout reste sur cet appareil : pas de compte, pas d’abonnement.',
+    ),
   ),
   (
     icon: Icons.lock_outline,
-    title: 'Protège PocheNette',
-    body:
-        'Tu pourras activer un code PIN et la biométrie dans Réglages. Gratuit, privé, à ton rythme.',
+    title: l10n.t('Protège PocheNette'),
+    body: l10n.t(
+      'Tu pourras activer un code PIN et la biométrie dans Réglages. Gratuit, privé, à ton rythme.',
+    ),
   ),
 ];
 
@@ -43,6 +47,8 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final l10n = context.l10n;
+    final pages = onboardingPages(l10n);
     final bottomInset = MediaQuery.paddingOf(context).bottom;
     return Scaffold(
       backgroundColor: canvas,
@@ -56,21 +62,21 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
                 alignment: Alignment.centerRight,
                 child: Semantics(
                   button: true,
-                  label: 'Passer',
+                  label: l10n.t('Passer'),
                   child: Material(
                     color: const Color(0xffe7f8f0),
                     borderRadius: BorderRadius.circular(16),
                     child: InkWell(
                       borderRadius: BorderRadius.circular(16),
                       onTap: widget.onDone,
-                      child: const Padding(
-                        padding: EdgeInsets.symmetric(
+                      child: Padding(
+                        padding: const EdgeInsets.symmetric(
                           horizontal: 18,
                           vertical: 14,
                         ),
                         child: Text(
-                          'Passer',
-                          style: TextStyle(
+                          l10n.t('Passer'),
+                          style: const TextStyle(
                             color: emerald,
                             fontWeight: FontWeight.w800,
                           ),
@@ -83,10 +89,10 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
               Expanded(
                 child: PageView.builder(
                   controller: controller,
-                  itemCount: onboardingPages.length,
+                  itemCount: pages.length,
                   onPageChanged: (value) => setState(() => page = value),
                   itemBuilder: (context, index) {
-                    final item = onboardingPages[index];
+                    final item = pages[index];
                     return Column(
                       mainAxisAlignment: MainAxisAlignment.center,
                       children: [
@@ -126,7 +132,7 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
               Row(
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
-                  for (var i = 0; i < onboardingPages.length; i++)
+                  for (var i = 0; i < pages.length; i++)
                     AnimatedContainer(
                       duration: const Duration(milliseconds: 220),
                       width: i == page ? 18 : 8,
@@ -142,15 +148,15 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
               const SizedBox(height: 18),
               Semantics(
                 button: true,
-                label: page >= onboardingPages.length - 1
-                    ? 'Commencer'
-                    : 'Continuer',
+                label: page >= pages.length - 1
+                    ? l10n.t('Commencer')
+                    : l10n.t('Continuer'),
                 child: SizedBox(
                   width: double.infinity,
                   height: 56,
                   child: FilledButton(
                     onPressed: () {
-                      if (page >= onboardingPages.length - 1) {
+                      if (page >= pages.length - 1) {
                         widget.onDone();
                         return;
                       }
@@ -160,9 +166,9 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
                       );
                     },
                     child: Text(
-                      page >= onboardingPages.length - 1
-                          ? 'Commencer'
-                          : 'Continuer',
+                      page >= pages.length - 1
+                          ? l10n.t('Commencer')
+                          : l10n.t('Continuer'),
                     ),
                   ),
                 ),

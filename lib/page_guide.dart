@@ -1,97 +1,129 @@
 import 'package:flutter/material.dart';
 
 import 'design.dart';
+import 'l10n/l10n.dart';
 
-const pageGuides = [
+List<({String title, List<(String, String)> steps})> pageGuides(L10n l10n) => [
   (
-    title: 'Lire ton tableau de bord',
+    title: l10n.t('Lire ton tableau de bord'),
     steps: [
       (
-        'Choisis une période',
-        'La roue répartit les dépenses par catégorie. Touche une catégorie pour filtrer l’historique.',
+        l10n.t('Choisis une période'),
+        l10n.t(
+          'La roue répartit les dépenses par catégorie. Touche une catégorie pour filtrer l’historique.',
+        ),
       ),
       (
-        'Lis le reste du mois',
-        'PocheNette soustrait les charges à régler du total de tes portefeuilles. Le total des soldes reste affiché dans la roue.',
+        l10n.t('Lis le reste du mois'),
+        l10n.t(
+          'PocheNette soustrait les charges à régler du total de tes portefeuilles. Le total des soldes reste affiché dans la roue.',
+        ),
       ),
       (
-        'Enregistre un mouvement',
-        'Utilise Dépense ou Revenu. La double flèche sert à déplacer de l’argent entre tes portefeuilles.',
+        l10n.t('Enregistre un mouvement'),
+        l10n.t(
+          'Utilise Dépense ou Revenu. La double flèche sert à déplacer de l’argent entre tes portefeuilles.',
+        ),
       ),
     ],
   ),
   (
-    title: 'Suivre tes portefeuilles',
+    title: l10n.t('Suivre tes portefeuilles'),
     steps: [
       (
-        'Ajoute un portefeuille',
-        'Choisis le type de portefeuille. Pour un compte bancaire, sélectionne ta banque, puis saisis le solde actuel en FCFA.',
+        l10n.t('Ajoute un portefeuille'),
+        l10n.t(
+          'Choisis le type de portefeuille. Pour un compte bancaire, sélectionne ta banque, puis saisis le solde actuel en FCFA.',
+        ),
       ),
       (
-        'Consulte son historique',
-        'Touche une carte pour voir son solde et les opérations enregistrées.',
+        l10n.t('Consulte son historique'),
+        l10n.t(
+          'Touche une carte pour voir son solde et les opérations enregistrées.',
+        ),
       ),
       (
-        'Actualise avec les reçus',
-        'Active la lecture des SMS dans Réglages pour mettre à jour tes soldes Mobile Money à partir des nouveaux reçus reconnus.',
+        l10n.t('Actualise avec les reçus'),
+        l10n.t(
+          'Active la lecture des SMS dans Réglages pour mettre à jour tes soldes Mobile Money à partir des nouveaux reçus reconnus.',
+        ),
       ),
     ],
   ),
   (
-    title: 'Prévoir tes charges',
+    title: l10n.t('Prévoir tes charges'),
     steps: [
       (
-        'Ajoute une échéance',
-        'Renseigne le montant, la date et la fréquence. Les charges à régler d’ici la fin du mois réduisent le reste affiché sur l’accueil.',
+        l10n.t('Ajoute une échéance'),
+        l10n.t(
+          'Renseigne le montant, la date et la fréquence. Les charges à régler d’ici la fin du mois réduisent le reste affiché sur l’accueil.',
+        ),
       ),
       (
-        'Modifie une charge',
-        'Touche sa carte pour corriger le montant, la fréquence ou la date.',
+        l10n.t('Modifie une charge'),
+        l10n.t(
+          'Touche sa carte pour corriger le montant, la fréquence ou la date.',
+        ),
       ),
       (
-        'Marque-la comme réglée',
-        'Ouvre le menu de la charge. Une charge récurrente passe à sa prochaine échéance. Saisis le paiement dans tes transactions si aucun reçu ne l’a enregistré.',
+        l10n.t('Marque-la comme réglée'),
+        l10n.t(
+          'Ouvre le menu de la charge. Une charge récurrente passe à sa prochaine échéance. Saisis le paiement dans tes transactions si aucun reçu ne l’a enregistré.',
+        ),
       ),
     ],
   ),
   (
-    title: 'Suivre un projet d’épargne',
+    title: l10n.t('Suivre un projet d’épargne'),
     steps: [
       (
-        'Fixe une cible',
-        'Donne un nom au projet et indique le montant à atteindre.',
+        l10n.t('Fixe une cible'),
+        l10n.t(
+          'Donne un nom au projet et indique le montant à atteindre.',
+        ),
       ),
       (
-        'Ajoute un versement',
-        'Ouvre la carte et note le montant que tu as mis de côté. PocheNette suit ta progression sans déplacer l’argent.',
+        l10n.t('Ajoute un versement'),
+        l10n.t(
+          'Ouvre la carte et note le montant que tu as mis de côté. PocheNette suit ta progression sans déplacer l’argent.',
+        ),
       ),
       (
-        'Retrouve tes versements',
-        'Ouvre la carte pour voir les dates et montants enregistrés.',
+        l10n.t('Retrouve tes versements'),
+        l10n.t(
+          'Ouvre la carte pour voir les dates et montants enregistrés.',
+        ),
       ),
     ],
   ),
   (
-    title: 'Configurer PocheNette',
+    title: l10n.t('Configurer PocheNette'),
     steps: [
       (
-        'Autorise les SMS',
-        'Active la lecture et accepte la demande Android. PocheNette lit les nouveaux reçus des portefeuilles Mobile Money déjà créés.',
+        l10n.t('Autorise les SMS'),
+        l10n.t(
+          'Active la lecture et accepte la demande Android. PocheNette lit les nouveaux reçus des portefeuilles Mobile Money déjà créés.',
+        ),
       ),
       (
-        'Vérifie la synchronisation',
-        'Utilise Actualiser les soldes pour rechercher des reçus reconnus. Les données sont traitées et stockées sur le téléphone.',
+        l10n.t('Vérifie la synchronisation'),
+        l10n.t(
+          'Utilise Actualiser les soldes pour rechercher des reçus reconnus. Les données sont traitées et stockées sur le téléphone.',
+        ),
       ),
       (
-        'Adapte tes catégories',
-        'Ouvre Catégories pour ajouter un poste à utiliser lors de la saisie des transactions.',
+        l10n.t('Adapte tes catégories'),
+        l10n.t(
+          'Ouvre Catégories pour ajouter un poste à utiliser lors de la saisie des transactions.',
+        ),
       ),
     ],
   ),
 ];
 
 void showPageGuide(BuildContext context, int page) {
-  final guide = pageGuides[page];
+  final l10n = context.l10n;
+  final guide = pageGuides(l10n)[page];
   showModalBottomSheet<void>(
     context: context,
     isScrollControlled: true,
@@ -120,7 +152,7 @@ void showPageGuide(BuildContext context, int page) {
               Card(
                 child: ListTile(
                   leading: CircleAvatar(
-                    backgroundColor: const Color(0xffc5f6e3),
+                    backgroundColor: mintWash,
                     foregroundColor: emerald,
                     radius: 16,
                     child: Text('${index + 1}', style: numberStyle),
@@ -132,7 +164,7 @@ void showPageGuide(BuildContext context, int page) {
             const SizedBox(height: 8),
             FilledButton(
               onPressed: () => Navigator.pop(context),
-              child: const Text('Compris'),
+              child: Text(l10n.t('Compris')),
             ),
           ],
         ),

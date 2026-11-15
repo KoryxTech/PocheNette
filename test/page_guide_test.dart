@@ -49,7 +49,9 @@ void main() {
         ),
       );
       await tester.pumpAndSettle();
-      await tester.tap(find.byTooltip('Guide rapide'));
+      await tester.tap(find.byTooltip('Menu'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Guide rapide'));
       await tester.pumpAndSettle();
       expect(find.text(entry.value), findsOneWidget);
       await tester.ensureVisible(find.text('Compris'));

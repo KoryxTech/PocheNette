@@ -85,13 +85,13 @@ List<({String title, List<(String, String)> steps})> pageGuides(L10n l10n) => [
       (
         l10n.t('Ajoute un versement'),
         l10n.t(
-          'Ouvre la carte et note le montant que tu as mis de côté. PocheNette suit ta progression sans déplacer l’argent.',
+          'Ouvre la carte, choisis le portefeuille source et saisis le montant à réserver.',
         ),
       ),
       (
-        l10n.t('Retrouve tes versements'),
+        l10n.t('Configure l’épargne automatique'),
         l10n.t(
-          'Ouvre la carte pour voir les dates et montants enregistrés.',
+          'Choisis une catégorie de revenu et le pourcentage à mettre de côté à chaque entrée, jusqu’à la cible.',
         ),
       ),
     ],

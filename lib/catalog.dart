@@ -28,6 +28,7 @@ const incomeCategories = [
   'Acompte / avance',
   'Business / vente',
   'Tontine (réception)',
+  'Loyer perçu',
   'Transfert famille',
   'Freelance / prestation',
   'Agriculture / vente',

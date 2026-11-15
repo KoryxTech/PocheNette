@@ -176,11 +176,7 @@ class SummaryPanel extends StatelessWidget {
         ),
         if (progress != null) ...[
           const SizedBox(height: 14),
-          PocheProgress(
-            value: progress!,
-            color: mint,
-            track: navyDeep,
-          ),
+          PocheProgress(value: progress!, color: mint, track: navyDeep),
         ],
         const SizedBox(height: 10),
         Text(
@@ -199,13 +195,19 @@ class SummaryPanel extends StatelessWidget {
 }
 
 class BalanceRing extends StatelessWidget {
-  const BalanceRing({super.key, required this.values, required this.child});
+  const BalanceRing({
+    super.key,
+    required this.values,
+    required this.child,
+    this.diameter = 206,
+  });
+  final double diameter;
   final List<int> values;
   final Widget child;
 
   @override
   Widget build(BuildContext context) => SizedBox.square(
-    dimension: 206,
+    dimension: diameter,
     child: TweenAnimationBuilder<double>(
       key: ValueKey(values.join(',')),
       tween: Tween(begin: 0, end: 1),

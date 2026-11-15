@@ -16,6 +16,10 @@ import 'providers.dart';
 import 'receipt.dart';
 import 'security.dart';
 import 'stats_page.dart';
+import 'features/about/presentation/about_page.dart';
+import 'features/splash/presentation/splash_view.dart';
+import 'core/config/brand_constants.dart';
+import 'package:url_launcher/url_launcher.dart';
 import 'features/transfer/domain/transfer_bundle.dart';
 import 'features/transfer/presentation/transfer_export_page.dart';
 import 'features/transfer/presentation/transfer_import_page.dart';
@@ -106,6 +110,7 @@ class _DashboardState extends State<Dashboard> with WidgetsBindingObserver {
   late final AppLock lock = AppLock(channel);
   int tab = 0;
   bool ready = false;
+  bool showSplash = true;
   bool enabled = false;
   bool syncing = false;
   bool rescan = false;
@@ -136,7 +141,18 @@ class _DashboardState extends State<Dashboard> with WidgetsBindingObserver {
     channel.setMethodCallHandler((call) async {
       if (call.method == 'inboxChanged') await sync();
     });
-    load();
+    _boot();
+  }
+
+  Future<void> _boot() async {
+    final started = DateTime.now();
+    await load();
+    final elapsed = DateTime.now().difference(started);
+    final remaining = BrandConstants.splashMinDuration - elapsed;
+    if (remaining > Duration.zero) {
+      await Future<void>.delayed(remaining);
+    }
+    if (mounted) setState(() => showSplash = false);
   }
 
   @override
@@ -242,13 +258,16 @@ class _DashboardState extends State<Dashboard> with WidgetsBindingObserver {
                 (payment) => <String, dynamic>{
                   'amount': asInt(payment['amount']),
                   'at': asInt(payment['at']),
+                  if (payment['wallet'] is String) 'wallet': payment['wallet'],
+                  if (payment['walletName'] is String)
+                    'walletName': payment['walletName'],
+                  if (payment['automatic'] == true) 'automatic': true,
                 },
               )
               .toList()
         : <RowData>[];
     return goal;
   }
-
 
   Future<TransferBundle> buildTransferBundle() async {
     return TransferBundle(
@@ -510,6 +529,13 @@ class _DashboardState extends State<Dashboard> with WidgetsBindingObserver {
           op['sms'] != true &&
           (op['at'] as int) > (wallet['at'] as int)) {
         total += op['delta'] as int;
+      }
+    }
+    for (final goal in goals) {
+      for (final payment in goal['payments'] as List) {
+        if (payment['wallet'] == wallet['id']) {
+          total -= asInt(payment['amount']);
+        }
       }
     }
     return total;
@@ -898,6 +924,110 @@ class _DashboardState extends State<Dashboard> with WidgetsBindingObserver {
     return name == 'Banque Atlantique' ? 'AFG Bank Cameroun' : name;
   }
 
+  bool isCashWallet(RowData wallet) {
+    final name = walletName(wallet).toLowerCase();
+    final provider = (wallet['provider'] as String? ?? '').toLowerCase();
+    bool cash(String value) =>
+        value == 'espèces' ||
+        value == 'especes' ||
+        value == 'cash' ||
+        value.contains('espèce') ||
+        value.contains('espece');
+    return cash(name) || cash(provider);
+  }
+
+  bool _nameLooksCash(String value) {
+    final lower = value.toLowerCase();
+    return lower.contains('espèce') ||
+        lower.contains('espece') ||
+        lower == 'cash';
+  }
+
+  /// OM / MoMo / banque → espèces = retrait ; l’inverse = dépôt.
+  ({String fromLabel, String toLabel, String type}) transferLabels({
+    required RowData from,
+    required RowData to,
+  }) {
+    final fromName = walletName(from);
+    final toName = walletName(to);
+    final fromCash = isCashWallet(from);
+    final toCash = isCashWallet(to);
+    if (!fromCash && toCash) {
+      return (
+        fromLabel: 'Retrait vers $toName',
+        toLabel: 'Retrait de $fromName',
+        type: 'Retrait',
+      );
+    }
+    if (fromCash && !toCash) {
+      return (
+        fromLabel: 'Dépôt vers $toName',
+        toLabel: 'Dépôt de $fromName',
+        type: 'Dépôt',
+      );
+    }
+    return (
+      fromLabel: 'Transfert vers $toName',
+      toLabel: 'Transfert de $fromName',
+      type: 'Transfert',
+    );
+  }
+
+  String displayOperationLabel(RowData op) {
+    final label = op['label'] as String? ?? '';
+    if (op['transfer'] != true) return label;
+    if (label.startsWith('Retrait') || label.startsWith('Dépôt')) {
+      return label;
+    }
+    RowData? wallet;
+    for (final item in wallets) {
+      if (item['id'] == op['wallet']) {
+        wallet = item;
+        break;
+      }
+    }
+    final thisIsCash = wallet != null && isCashWallet(wallet);
+    if (label.startsWith('Transfert vers ')) {
+      final dest = label.substring('Transfert vers '.length);
+      if (_nameLooksCash(dest)) return 'Retrait vers $dest';
+      if (thisIsCash) return 'Dépôt vers $dest';
+      return label;
+    }
+    if (label.startsWith('Transfert de ')) {
+      final source = label.substring('Transfert de '.length);
+      if (_nameLooksCash(source)) return 'Dépôt de $source';
+      if (thisIsCash) return 'Retrait de $source';
+      return label;
+    }
+    return label;
+  }
+
+  String operationKind(RowData op) {
+    final stored = op['type'] as String?;
+    if (stored == 'Retrait' || stored == 'Dépôt' || stored == 'Transfert') {
+      return stored!;
+    }
+    if (op['transfer'] == true) {
+      final label = displayOperationLabel(op);
+      if (label.startsWith('Retrait')) return 'Retrait';
+      if (label.startsWith('Dépôt')) return 'Dépôt';
+      return 'Transfert';
+    }
+    final delta = asInt(op['delta']);
+    return delta < 0 ? 'Dépense' : 'Revenu';
+  }
+
+  IconData operationIcon(RowData op) {
+    if (op['sms'] == true) return Icons.sms_outlined;
+    final kind = operationKind(op);
+    return switch (kind) {
+      'Retrait' => Icons.outbox_outlined,
+      'Dépôt' => Icons.move_to_inbox_outlined,
+      'Transfert' => Icons.swap_horiz_outlined,
+      _ => categoryIcon(op['label'] as String?),
+    };
+  }
+
   Future<String?> chooseBank() {
     final existing = wallets.map(walletName).toSet();
     return showModalBottomSheet<String>(
@@ -1047,11 +1177,12 @@ class _DashboardState extends State<Dashboard> with WidgetsBindingObserver {
       final to = wallets.firstWhere((w) => walletName(w) == values[1]);
       final now = DateTime.now().millisecondsSinceEpoch;
       final note = values[3];
+      final labels = transferLabels(from: from, to: to);
       await change(() {
         operations.add({
           'wallet': from['id'],
-          'label': 'Transfert vers ${walletName(to)}',
-          'type': 'Transfert',
+          'label': labels.fromLabel,
+          'type': labels.type,
           'delta': -amount,
           'at': now,
           'transfer': true,
@@ -1059,8 +1190,8 @@ class _DashboardState extends State<Dashboard> with WidgetsBindingObserver {
         });
         operations.add({
           'wallet': to['id'],
-          'label': 'Transfert de ${walletName(from)}',
-          'type': 'Transfert',
+          'label': labels.toLabel,
+          'type': labels.type,
           'delta': amount,
           'at': now,
           'transfer': true,
@@ -1096,7 +1227,11 @@ class _DashboardState extends State<Dashboard> with WidgetsBindingObserver {
       message('Entre un montant supérieur à zéro.');
       return;
     }
-    final from = wallets.firstWhere((wallet) => walletName(wallet) == values[0]);
+    final index = wallets.indexWhere(
+      (wallet) => walletName(wallet) == values[0],
+    );
+    if (index < 0) return;
+    final from = wallets[index];
     final now = DateTime.now().millisecondsSinceEpoch;
     await change(() {
       if (!categories.contains(values[2])) categories.add(values[2]);
@@ -1109,6 +1244,7 @@ class _DashboardState extends State<Dashboard> with WidgetsBindingObserver {
         'transfer': false,
         'note': values[3],
       });
+      if (isIncome) allocateIncome(from, values[2], amount, now);
     });
   }
 
@@ -1211,21 +1347,127 @@ class _DashboardState extends State<Dashboard> with WidgetsBindingObserver {
     );
   }
 
+  int goalRemaining(RowData goal) => asInt(goal['amount']) - goalSaved(goal);
+
+  void recordContribution(
+    RowData goal,
+    RowData wallet,
+    int amount,
+    int at, {
+    bool automatic = false,
+  }) {
+    (goal['payments'] as List).add({
+      'amount': amount,
+      'at': at,
+      'wallet': wallet['id'],
+      'walletName': walletName(wallet),
+      if (automatic) 'automatic': true,
+    });
+  }
+
+  void allocateIncome(RowData wallet, String category, int income, int at) {
+    var available = balance(wallet).clamp(0, income);
+    for (final goal in goals) {
+      if (available == 0) break;
+      final percent = asInt(goal['incomePercent']);
+      final remaining = goalRemaining(goal);
+      if (goal['incomeCategory'] != category ||
+          percent < 1 ||
+          percent > 100 ||
+          remaining <= 0) {
+        continue;
+      }
+      final amount = (income * percent ~/ 100)
+          .clamp(0, remaining)
+          .clamp(0, available);
+      if (amount == 0) continue;
+      recordContribution(goal, wallet, amount, at, automatic: true);
+      available -= amount;
+    }
+  }
+
+  Future<void> configureAutomaticSaving(RowData goal) async {
+    final categoriesForIncome = categoriesForTransaction(
+      isIncome: true,
+      stored: categories,
+      extraExpenses: extraExpenseCategories,
+      extraIncomes: extraIncomeCategories,
+    );
+    final category = goal['incomeCategory'] as String?;
+    final percent = asInt(goal['incomePercent']);
+    final values = await form(
+      'Épargne automatique',
+      [
+        field(
+          'Catégorie',
+          choices: categoriesForIncome,
+          initial: categoriesForIncome.contains(category) ? category : null,
+        ),
+        field(
+          'Pourcentage du revenu',
+          number: true,
+          initial: percent.toString(),
+        ),
+      ],
+      subtitle:
+          'À chaque revenu de cette catégorie, la part est réservée dans le portefeuille crédité. Saisis 0 pour désactiver.',
+    );
+    if (values == null || !mounted || !goals.contains(goal)) return;
+    final selectedPercent = int.parse(values[1]);
+    if (selectedPercent < 0 || selectedPercent > 100) {
+      message('Entre un pourcentage entre 0 et 100.');
+      return;
+    }
+    await change(() {
+      if (selectedPercent == 0) {
+        goal.remove('incomeCategory');
+        goal.remove('incomePercent');
+      } else {
+        goal['incomeCategory'] = values[0];
+        goal['incomePercent'] = selectedPercent;
+      }
+    });
+  }
+
   Future<void> contribute(RowData goal) async {
+    if (goalRemaining(goal) <= 0) return;
+    if (wallets.isEmpty) {
+      message('Crée un portefeuille avant de verser de l’argent.');
+      return;
+    }
+    final sources = {
+      for (final wallet in wallets) walletName(wallet): wallet['id'],
+    };
     final values = await form('Ajouter un versement', [
+      field('Portefeuille source', choices: sources.keys.toList()),
       field('Montant en FCFA', number: true),
     ]);
-    if (values == null) return;
-    final amount = int.parse(values[0]);
+    if (values == null || !mounted || !goals.contains(goal)) return;
+    final amount = int.parse(values[1]);
     if (amount <= 0) {
       message('Entre un montant supérieur à zéro.');
       return;
     }
+    if (amount > goalRemaining(goal)) {
+      message('Le montant dépasse ce qu’il reste à épargner.');
+      return;
+    }
+    final index = wallets.indexWhere(
+      (wallet) => wallet['id'] == sources[values[0]],
+    );
+    if (index < 0) return;
+    final wallet = wallets[index];
+    if (amount > balance(wallet)) {
+      message('Le solde disponible de ce portefeuille est insuffisant.');
+      return;
+    }
     await change(
-      () => (goal['payments'] as List).add({
-        'amount': amount,
-        'at': DateTime.now().millisecondsSinceEpoch,
-      }),
+      () => recordContribution(
+        goal,
+        wallet,
+        amount,
+        DateTime.now().millisecondsSinceEpoch,
+      ),
     );
   }
 
@@ -1264,7 +1506,9 @@ class _DashboardState extends State<Dashboard> with WidgetsBindingObserver {
       builder: (context) => AlertDialog(
         title: Text('Supprimer ${goal['name']} ?'),
         content: Text(
-          tr('L’objectif et ses versements enregistrés seront retirés.'),
+          tr(
+            'Supprimer cet objectif libère les montants réservés dans les portefeuilles sources.',
+          ),
         ),
         actions: [
           TextButton(
@@ -1387,14 +1631,10 @@ class _DashboardState extends State<Dashboard> with WidgetsBindingObserver {
         ),
       for (final op in sorted.take(wallet == null ? 8 : sorted.length))
         tile(
-          op['label'] as String,
+          displayOperationLabel(op),
           dateText(DateTime.fromMillisecondsSinceEpoch(asInt(op['at']))),
           leading: IconPlate(
-            op['sms'] == true
-                ? Icons.sms_outlined
-                : op['transfer'] == true
-                ? Icons.swap_horiz_outlined
-                : categoryIcon(op['label'] as String?),
+            operationIcon(op),
             color: asInt(op['delta']) < 0 ? rose : emerald,
           ),
           trailing: ConstrainedBox(
@@ -1463,7 +1703,9 @@ class _DashboardState extends State<Dashboard> with WidgetsBindingObserver {
         .toList();
   }
 
-  List<Widget> overview() {
+  ({List<Widget> balance, List<Widget> activity}) overview({
+    required bool wide,
+  }) {
     final entries = periodOperations();
     final income = entries.fold<int>(0, (sum, op) {
       final delta = asInt(op['delta']);
@@ -1494,7 +1736,7 @@ class _DashboardState extends State<Dashboard> with WidgetsBindingObserver {
     final legendAutresKeys = legendOverflow
         ? sortedExpenses.skip(maxLegendChips - 1).map((e) => e.key).toSet()
         : <String>{};
-    return [
+    final balanceOverview = <Widget>[
       Wrap(
         alignment: WrapAlignment.center,
         spacing: 5,
@@ -1534,6 +1776,7 @@ class _DashboardState extends State<Dashboard> with WidgetsBindingObserver {
       Center(
         child: BalanceRing(
           values: expenses.values.toList(),
+          diameter: wide ? 270 : 206,
           child: Padding(
             padding: const EdgeInsets.symmetric(horizontal: 12),
             child: Column(
@@ -1666,6 +1909,8 @@ class _DashboardState extends State<Dashboard> with WidgetsBindingObserver {
           ),
         ],
       ),
+    ];
+    final recentOperations = <Widget>[
       section(
         selectedCategory == null
             ? 'Dernières opérations'
@@ -1684,7 +1929,78 @@ class _DashboardState extends State<Dashboard> with WidgetsBindingObserver {
         }),
       ),
     ];
+    return (balance: balanceOverview, activity: recentOperations);
   }
+
+  Widget tabletPage() {
+    final (left, right, leftAction, rightAction) = switch (tab) {
+      0 => () {
+        final overviewContent = overview(wide: true);
+        return (
+          overviewContent.balance.sublist(
+            0,
+            overviewContent.balance.length - 1,
+          ),
+          overviewContent.activity,
+          overviewContent.balance.last,
+          null,
+        );
+      }(),
+      _ => () {
+        final content = page();
+        return (
+          content.take(1).toList(),
+          content.sublist(1, content.length - 1),
+          null,
+          content.last,
+        );
+      }(),
+    };
+    return Padding(
+      padding: EdgeInsets.fromLTRB(24, 20, 24, tab == 1 ? 76 : 20),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Expanded(
+            flex: 4,
+            child: tabletPane(left, 'summary', action: leftAction),
+          ),
+          const SizedBox(width: 20),
+          Expanded(
+            flex: 6,
+            child: tabletPane(right, 'detail', action: rightAction),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget tabletPane(List<Widget> children, String pane, {Widget? action}) =>
+      DecoratedBox(
+        decoration: BoxDecoration(
+          color: const Color(0xffeaf0f6),
+          borderRadius: BorderRadius.circular(24),
+          border: Border.all(color: const Color(0xffdce6ef)),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Expanded(
+              child: ListView(
+                key: PageStorageKey((tab, pane)),
+                primary: false,
+                padding: const EdgeInsets.all(20),
+                children: children,
+              ),
+            ),
+            if (action != null)
+              Padding(
+                padding: const EdgeInsets.fromLTRB(20, 0, 20, 20),
+                child: action,
+              ),
+          ],
+        ),
+      );
 
   int goalSaved(RowData goal) {
     final payments = goal['payments'];
@@ -1704,16 +2020,11 @@ class _DashboardState extends State<Dashboard> with WidgetsBindingObserver {
         break;
       }
     }
-    final type =
-        op['type'] as String? ??
-        (op['transfer'] == true
-            ? 'Transfert'
-            : delta < 0
-            ? 'Dépense'
-            : 'Revenu');
+    final type = operationKind(op);
     final note = (op['note'] as String?)?.trim() ?? '';
     final at = DateTime.fromMillisecondsSinceEpoch(asInt(op['at']));
     final safeBottom = MediaQuery.paddingOf(context).bottom;
+    final title = displayOperationLabel(op);
     await showModalBottomSheet<void>(
       context: context,
       isScrollControlled: true,
@@ -1753,11 +2064,7 @@ class _DashboardState extends State<Dashboard> with WidgetsBindingObserver {
               Row(
                 children: [
                   IconPlate(
-                    op['sms'] == true
-                        ? Icons.sms_outlined
-                        : op['transfer'] == true
-                        ? Icons.swap_horiz_outlined
-                        : categoryIcon(op['label'] as String?),
+                    operationIcon(op),
                     color: delta < 0 ? rose : emerald,
                   ),
                   const SizedBox(width: 12),
@@ -1766,7 +2073,7 @@ class _DashboardState extends State<Dashboard> with WidgetsBindingObserver {
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Text(
-                          sheetTr(op['label'] as String? ?? 'Opération'),
+                          sheetTr(title),
                           style: const TextStyle(
                             fontSize: 20,
                             fontWeight: FontWeight.w800,
@@ -1850,10 +2157,204 @@ class _DashboardState extends State<Dashboard> with WidgetsBindingObserver {
     ),
   );
 
+  List<Widget> savingsPage() {
+    final target = goals.fold<int>(
+      0,
+      (sum, goal) => sum + asInt(goal['amount']),
+    );
+    final saved = goals.fold<int>(0, (sum, goal) => sum + goalSaved(goal));
+    return [
+      if (goals.isNotEmpty)
+        SummaryPanel(
+          label: tr('Total mis de côté'),
+          amount: money(saved),
+          footer: '${tr('Objectif total')} · ${money(target)}',
+          progress: target <= 0 ? 0 : (saved / target).clamp(0.0, 1.0),
+        ),
+      section('Mes objectifs'),
+      if (goals.isEmpty)
+        tile(
+          'Aucun objectif d’épargne',
+          'Crée un projet pour commencer à mettre de côté.',
+          leading: const IconPlate(Icons.savings_outlined),
+        ),
+      Padding(
+        padding: const EdgeInsets.only(bottom: 12),
+        child: FilledButton.icon(
+          onPressed: saving ? null : addGoal,
+          icon: const Icon(Icons.add),
+          label: Text(tr('Nouvel objectif')),
+        ),
+      ),
+      for (final goal in goals) savingsGoalCard(goal),
+    ];
+  }
+
+  Widget savingsGoalCard(RowData goal) {
+    final saved = goalSaved(goal);
+    final target = asInt(goal['amount']);
+    final remaining = target - saved;
+    final complete = remaining <= 0;
+    final percent = asInt(goal['incomePercent']);
+    final category = tr(goal['incomeCategory'] as String? ?? '');
+    final payments = goal['payments'] as List;
+    final progress = target <= 0 ? 1.0 : (saved / target).clamp(0.0, 1.0);
+    const detailStyle = TextStyle(color: muted, fontSize: 12);
+    return Card(
+      key: PageStorageKey(goal),
+      clipBehavior: Clip.antiAlias,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          ExpansionTile(
+            tilePadding: const EdgeInsets.fromLTRB(16, 12, 16, 12),
+            shape: const Border(),
+            collapsedShape: const Border(),
+            title: Row(
+              children: [
+                IconPlate(
+                  complete ? Icons.check_rounded : Icons.flag_outlined,
+                  color: complete ? emerald : navyMid,
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Text(
+                    goal['name'] as String? ?? tr('Objectif'),
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      fontSize: 16,
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            subtitle: Padding(
+              padding: const EdgeInsets.only(top: 14),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Wrap(
+                    spacing: 8,
+                    runSpacing: 4,
+                    crossAxisAlignment: WrapCrossAlignment.center,
+                    children: [
+                      Text(
+                        money(saved),
+                        style: numberStyle.copyWith(fontSize: 18, color: navy),
+                      ),
+                      Text(
+                        '${tr('Cible')} · ${money(target)}',
+                        style: detailStyle,
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 9),
+                  PocheProgress(value: progress, color: emerald),
+                  const SizedBox(height: 7),
+                  Text(
+                    complete
+                        ? tr('Objectif atteint')
+                        : '${money(remaining)} ${tr('à épargner')}',
+                    style: complete
+                        ? detailStyle.copyWith(
+                            color: navy,
+                            fontWeight: FontWeight.w800,
+                          )
+                        : detailStyle,
+                  ),
+                ],
+              ),
+            ),
+            expandedCrossAxisAlignment: CrossAxisAlignment.stretch,
+            childrenPadding: const EdgeInsets.fromLTRB(16, 0, 16, 4),
+            children: [
+              const Divider(height: 16),
+              Text(
+                tr('Historique des versements'),
+                style: const TextStyle(fontWeight: FontWeight.w800),
+              ),
+              if (payments.isEmpty)
+                Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 10),
+                  child: Text(tr('Aucun versement'), style: detailStyle),
+                ),
+              for (final payment in payments.reversed)
+                ListTile(
+                  contentPadding: EdgeInsets.zero,
+                  dense: true,
+                  leading: Icon(
+                    payment['automatic'] == true
+                        ? Icons.autorenew_rounded
+                        : Icons.south_west_rounded,
+                    color: navyMid,
+                    size: 20,
+                  ),
+                  title: Text(money(asInt(payment['amount']))),
+                  subtitle: Text(
+                    [
+                      dateText(
+                        DateTime.fromMillisecondsSinceEpoch(
+                          asInt(payment['at']),
+                        ),
+                      ),
+                      payment['walletName'] as String? ??
+                          tr('Source non renseignée'),
+                      if (payment['automatic'] == true)
+                        tr('Épargne automatique'),
+                    ].join(' · '),
+                  ),
+                ),
+              Align(
+                alignment: AlignmentDirectional.centerStart,
+                child: TextButton(
+                  onPressed: saving ? null : () => deleteGoal(goal),
+                  child: Text(
+                    tr('Supprimer l’objectif'),
+                    style: const TextStyle(color: rose),
+                  ),
+                ),
+              ),
+            ],
+          ),
+          if (!complete)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  FilledButton.tonalIcon(
+                    onPressed: saving ? null : () => contribute(goal),
+                    icon: const Icon(Icons.add),
+                    label: Text(tr('Ajouter un versement')),
+                  ),
+                  TextButton.icon(
+                    onPressed: saving
+                        ? null
+                        : () => configureAutomaticSaving(goal),
+                    icon: const Icon(Icons.autorenew_rounded, size: 18),
+                    style: TextButton.styleFrom(foregroundColor: navyMid),
+                    label: Text(
+                      percent > 0
+                          ? '${tr('Épargne automatique')} · $percent % · $category'
+                          : tr('Configurer l’épargne automatique'),
+                      textAlign: TextAlign.center,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+
   List<Widget> page() {
     switch (tab) {
       case 0:
-        return overview();
+        final content = overview(wide: false);
+        return [...content.balance, ...content.activity];
       case 1:
         return [
           SummaryPanel(
@@ -1979,137 +2480,9 @@ class _DashboardState extends State<Dashboard> with WidgetsBindingObserver {
           ),
         ];
       case 3:
-        final target = goals.fold<int>(
-          0,
-          (sum, goal) => sum + asInt(goal['amount']),
-        );
-        final saved = goals.fold<int>(0, (sum, goal) => sum + goalSaved(goal));
-        return [
-          SummaryPanel(
-            label: 'Épargne en projet',
-            amount: money(saved),
-            footer: 'Objectif total · ${money(target)}',
-            progress: target == 0 ? 0 : (saved / target).clamp(0.0, 1.0),
-          ),
-          section('Mes objectifs'),
-          if (goals.isEmpty)
-            tile(
-              'Aucun objectif d’épargne',
-              'Crée un projet et note tes versements au fil du temps.',
-              leading: const IconPlate(Icons.savings_outlined),
-            ),
-          for (final goal in goals)
-            Card(
-              child: ExpansionTile(
-                leading: const IconPlate(Icons.flag_outlined),
-                title: Text(
-                  goal['name'] as String? ?? 'Objectif',
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                ),
-                subtitle: Padding(
-                  padding: const EdgeInsets.only(top: 5, bottom: 5),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        '${money(goalSaved(goal))} / ${money(asInt(goal['amount']))}',
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: numberStyle.copyWith(fontSize: 12, color: muted),
-                      ),
-                      const SizedBox(height: 7),
-                      PocheProgress(
-                        value: asInt(goal['amount']) <= 0
-                            ? 0
-                            : (goalSaved(goal) / asInt(goal['amount']))
-                                  .clamp(0.0, 1.0),
-                      ),
-                    ],
-                  ),
-                ),
-                children: [
-                  for (final payment
-                      in ((goal['payments'] as List?) ?? const []).reversed)
-                    ListTile(
-                      title: Text(
-                        money(asInt((payment as Map)['amount'])),
-                      ),
-                      subtitle: Text(
-                        dateText(
-                          DateTime.fromMillisecondsSinceEpoch(
-                            asInt(payment['at']),
-                          ),
-                        ),
-                      ),
-                    ),
-                  TextButton(
-                    onPressed: saving ? null : () => contribute(goal),
-                    child: Text(tr('Ajouter un versement')),
-                  ),
-                  TextButton(
-                    onPressed: saving ? null : () => deleteGoal(goal),
-                    child: Text(
-                      tr('Supprimer l’objectif'),
-                      style: const TextStyle(color: rose),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          FilledButton.icon(
-            onPressed: saving ? null : addGoal,
-            icon: const Icon(Icons.add),
-            label: Text(tr('Nouvel objectif')),
-          ),
-        ];
+        return savingsPage();
       default:
-        final currentLocale = localeCode ?? Localizations.localeOf(context).languageCode;
         return [
-          section('Langue'),
-          Row(
-            children: [
-              Expanded(
-                child: _LanguageChip(
-                  flag: '🇫🇷',
-                  label: tr('Français'),
-                  selected: !currentLocale.startsWith('en'),
-                  onTap: saving ? null : () => setAppLocale('fr'),
-                ),
-              ),
-              const SizedBox(width: 10),
-              Expanded(
-                child: _LanguageChip(
-                  flag: '🇬🇧',
-                  label: 'English',
-                  selected: currentLocale.startsWith('en'),
-                  onTap: saving ? null : () => setAppLocale('en'),
-                ),
-              ),
-            ],
-          ),
-          section('Changer de téléphone'),
-          Row(
-            children: [
-              Expanded(
-                child: _SettingsPairCard(
-                  icon: Icons.qr_code_2_rounded,
-                  title: tr('Envoyer'),
-                  subtitle: tr('Afficher le QR'),
-                  onTap: saving ? null : openTransferExport,
-                ),
-              ),
-              const SizedBox(width: 10),
-              Expanded(
-                child: _SettingsPairCard(
-                  icon: Icons.qr_code_scanner_rounded,
-                  title: tr('Recevoir'),
-                  subtitle: tr('Scanner le QR'),
-                  onTap: saving ? null : openTransferImport,
-                ),
-              ),
-            ],
-          ),
           section('Sécurité'),
           Card(
             child: Padding(
@@ -2226,7 +2599,7 @@ class _DashboardState extends State<Dashboard> with WidgetsBindingObserver {
               ),
             ),
           ),
-          section('Alertes'),
+          section('Notifications'),
           Card(
             child: Column(
               children: [
@@ -2314,7 +2687,7 @@ class _DashboardState extends State<Dashboard> with WidgetsBindingObserver {
                 ),
               ),
             ),
-          section('Comptes et budget'),
+          section('Budget'),
           tile(
             'Devise',
             'Franc CFA (Afrique centrale)',
@@ -2366,44 +2739,37 @@ class _DashboardState extends State<Dashboard> with WidgetsBindingObserver {
               }
             },
           ),
-          const SizedBox(height: 4),
+          section('Données'),
           Row(
             children: [
               Expanded(
                 child: _SettingsPairCard(
-                  icon: Icons.calendar_month_outlined,
-                  title: tr('Calendrier'),
-                  subtitle: tr('Échéances'),
-                  onTap: () => Navigator.push(
-                    context,
-                    MaterialPageRoute<void>(
-                      builder: (_) => ChargesCalendarPage(
-                        charges: charges,
-                        money: money,
-                      ),
-                    ),
-                  ),
+                  icon: Icons.qr_code_2_rounded,
+                  title: tr('Envoyer'),
+                  subtitle: tr('Afficher le QR'),
+                  onTap: saving ? null : openTransferExport,
                 ),
               ),
               const SizedBox(width: 10),
               Expanded(
                 child: _SettingsPairCard(
-                  icon: Icons.insights_outlined,
-                  title: tr('Stats'),
-                  subtitle: tr('Répartition'),
-                  onTap: () => Navigator.push(
-                    context,
-                    MaterialPageRoute<void>(
-                      builder: (_) => StatsPage(
-                        operations: operations,
-                        money: money,
-                        categories: categories,
-                      ),
-                    ),
-                  ),
+                  icon: Icons.qr_code_scanner_rounded,
+                  title: tr('Recevoir'),
+                  subtitle: tr('Scanner le QR'),
+                  onTap: saving ? null : openTransferImport,
                 ),
               ),
             ],
+          ),
+          section('Application'),
+          tile(
+            'À propos de PocheNette',
+            'Édité par Koryx · www.koryx.net',
+            leading: const IconPlate(Icons.info_outline_rounded),
+            onTap: () => Navigator.push(
+              context,
+              MaterialPageRoute<void>(builder: (_) => const AboutPage()),
+            ),
           ),
         ];
     }
@@ -2411,13 +2777,10 @@ class _DashboardState extends State<Dashboard> with WidgetsBindingObserver {
 
   @override
   Widget build(BuildContext context) {
-    if (!ready) {
-      return Scaffold(
-        body: Center(
-          child: loadFailed
-              ? Text(tr('Impossible de charger les données.'))
-              : const CircularProgressIndicator(),
-        ),
+    if (showSplash || !ready) {
+      return SplashView(
+        failed: loadFailed,
+        errorText: tr('Impossible de charger les données.'),
       );
     }
     if (!onboardingDone) {
@@ -2472,30 +2835,171 @@ class _DashboardState extends State<Dashboard> with WidgetsBindingObserver {
               onPressed: () => sync(manual: true),
               icon: const Icon(Icons.sync),
             ),
-          IconButton(
-            tooltip: tr('Guide rapide'),
-            onPressed: () => showPageGuide(context, tab),
-            icon: const Icon(Icons.help_outline),
+          PopupMenuButton<String>(
+            tooltip: tr('Menu'),
+            offset: const Offset(0, 48),
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(16),
+            ),
+            icon: const Icon(Icons.account_circle_outlined),
+            onSelected: (value) async {
+              switch (value) {
+                case 'guide':
+                  showPageGuide(context, tab);
+                case 'calendar':
+                  if (!mounted) return;
+                  await Navigator.push(
+                    context,
+                    MaterialPageRoute<void>(
+                      builder: (_) =>
+                          ChargesCalendarPage(charges: charges, money: money),
+                    ),
+                  );
+                case 'stats':
+                  if (!mounted) return;
+                  await Navigator.push(
+                    context,
+                    MaterialPageRoute<void>(
+                      builder: (_) => StatsPage(
+                        operations: operations,
+                        money: money,
+                        categories: categories,
+                      ),
+                    ),
+                  );
+                case 'lang_fr':
+                  await setAppLocale('fr');
+                case 'lang_en':
+                  await setAppLocale('en');
+                case 'about':
+                  if (!mounted) return;
+                  await Navigator.push(
+                    context,
+                    MaterialPageRoute<void>(builder: (_) => const AboutPage()),
+                  );
+                case 'terms':
+                  final uri = Uri.parse(BrandConstants.termsUrl);
+                  final ok = await launchUrl(
+                    uri,
+                    mode: LaunchMode.externalApplication,
+                  );
+                  if (!ok && mounted) {
+                    message('Impossible d’ouvrir les CGU.');
+                  }
+                case 'settings':
+                  setState(() => tab = 4);
+              }
+            },
+            itemBuilder: (context) {
+              final currentLocale =
+                  localeCode ?? Localizations.localeOf(context).languageCode;
+              final isEnglish = currentLocale.startsWith('en');
+              return [
+                PopupMenuItem(
+                  value: 'calendar',
+                  child: ListTile(
+                    contentPadding: EdgeInsets.zero,
+                    leading: const Icon(Icons.calendar_month_outlined),
+                    title: Text(tr('Calendrier')),
+                  ),
+                ),
+                PopupMenuItem(
+                  value: 'stats',
+                  child: ListTile(
+                    contentPadding: EdgeInsets.zero,
+                    leading: const Icon(Icons.insights_outlined),
+                    title: Text(tr('Stats')),
+                  ),
+                ),
+                const PopupMenuDivider(),
+                PopupMenuItem(
+                  value: 'lang_fr',
+                  child: ListTile(
+                    contentPadding: EdgeInsets.zero,
+                    leading: const Text('🇫🇷', style: TextStyle(fontSize: 20)),
+                    title: Text(tr('Français')),
+                    trailing: isEnglish
+                        ? null
+                        : const Icon(Icons.check_rounded, color: emerald),
+                  ),
+                ),
+                PopupMenuItem(
+                  value: 'lang_en',
+                  child: ListTile(
+                    contentPadding: EdgeInsets.zero,
+                    leading: const Text('🇬🇧', style: TextStyle(fontSize: 20)),
+                    title: const Text('English'),
+                    trailing: isEnglish
+                        ? const Icon(Icons.check_rounded, color: emerald)
+                        : null,
+                  ),
+                ),
+                const PopupMenuDivider(),
+                PopupMenuItem(
+                  value: 'guide',
+                  child: ListTile(
+                    contentPadding: EdgeInsets.zero,
+                    leading: const Icon(Icons.help_outline_rounded),
+                    title: Text(tr('Guide rapide')),
+                  ),
+                ),
+                PopupMenuItem(
+                  value: 'about',
+                  child: ListTile(
+                    contentPadding: EdgeInsets.zero,
+                    leading: const Icon(Icons.info_outline_rounded),
+                    title: Text(tr('À propos')),
+                  ),
+                ),
+                PopupMenuItem(
+                  value: 'terms',
+                  child: ListTile(
+                    contentPadding: EdgeInsets.zero,
+                    leading: const Icon(Icons.description_outlined),
+                    title: Text(tr('CGU')),
+                  ),
+                ),
+                if (tab != 4)
+                  PopupMenuItem(
+                    value: 'settings',
+                    child: ListTile(
+                      contentPadding: EdgeInsets.zero,
+                      leading: const Icon(Icons.settings_outlined),
+                      title: Text(tr('Réglages')),
+                    ),
+                  ),
+              ];
+            },
           ),
           const SizedBox(width: 4),
         ],
       ),
-      body: Center(
-        child: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 620),
-          child: AnimatedSwitcher(
-            duration: motionDuration(context, 180),
-            child: ListView(
-              key: PageStorageKey(tab),
-              padding: EdgeInsets.fromLTRB(
-                16,
-                14,
-                16,
-                24 + (tab == 1 ? 72 : 8),
-              ),
-              children: page(),
-            ),
-          ),
+      body: SafeArea(
+        top: false,
+        bottom: false,
+        child: LayoutBuilder(
+          builder: (context, constraints) {
+            final wide = constraints.maxWidth >= 760;
+            final tablet = wide && constraints.maxHeight >= 420 && tab < 4;
+            return AnimatedSwitcher(
+              duration: motionDuration(context, 180),
+              child: tablet
+                  ? KeyedSubtree(
+                      key: ValueKey(('tablet', tab)),
+                      child: tabletPage(),
+                    )
+                  : ListView(
+                      key: PageStorageKey(tab),
+                      padding: EdgeInsets.fromLTRB(
+                        wide ? 28 : 16,
+                        wide ? 24 : 14,
+                        wide ? 28 : 16,
+                        24 + (tab == 1 ? 72 : 8),
+                      ),
+                      children: page(),
+                    ),
+            );
+          },
         ),
       ),
       floatingActionButton: tab == 1
@@ -2505,107 +3009,41 @@ class _DashboardState extends State<Dashboard> with WidgetsBindingObserver {
               label: Text(tr('Transaction')),
             )
           : null,
-      bottomNavigationBar: Material(
-        color: Colors.white,
-        elevation: 0,
-        child: Padding(
-          // Remonte les onglets hors de la barre de gestes Xiaomi / Android.
-          padding: EdgeInsets.only(
-            bottom: MediaQuery.paddingOf(context).bottom + 10,
+      bottomNavigationBar: NavigationBar(
+        selectedIndex: tab,
+        onDestinationSelected: (value) => setState(() => tab = value),
+        labelBehavior: NavigationDestinationLabelBehavior.alwaysShow,
+        destinations: [
+          NavigationDestination(
+            icon: const Icon(Icons.home_outlined),
+            selectedIcon: const Icon(Icons.home),
+            label: l10n.navLabels[0],
           ),
-          child: NavigationBar(
-            selectedIndex: tab,
-            onDestinationSelected: (value) => setState(() => tab = value),
-            labelBehavior: NavigationDestinationLabelBehavior.alwaysShow,
-            destinations: [
-              NavigationDestination(
-                icon: const Icon(Icons.home_outlined),
-                selectedIcon: const Icon(Icons.home),
-                label: l10n.navLabels[0],
-              ),
-              NavigationDestination(
-                icon: const Icon(Icons.account_balance_wallet_outlined),
-                selectedIcon: const Icon(Icons.account_balance_wallet),
-                label: l10n.navLabels[1],
-              ),
-              NavigationDestination(
-                icon: const Icon(Icons.event_outlined),
-                selectedIcon: const Icon(Icons.event),
-                label: l10n.navLabels[2],
-              ),
-              NavigationDestination(
-                icon: const Icon(Icons.savings_outlined),
-                selectedIcon: const Icon(Icons.savings),
-                label: l10n.navLabels[3],
-              ),
-              NavigationDestination(
-                icon: const Icon(Icons.settings_outlined),
-                selectedIcon: const Icon(Icons.settings),
-                label: l10n.navLabels[4],
-              ),
-            ],
+          NavigationDestination(
+            icon: const Icon(Icons.account_balance_wallet_outlined),
+            selectedIcon: const Icon(Icons.account_balance_wallet),
+            label: l10n.navLabels[1],
           ),
-        ),
+          NavigationDestination(
+            icon: const Icon(Icons.event_outlined),
+            selectedIcon: const Icon(Icons.event),
+            label: l10n.navLabels[2],
+          ),
+          NavigationDestination(
+            icon: const Icon(Icons.savings_outlined),
+            selectedIcon: const Icon(Icons.savings),
+            label: l10n.navLabels[3],
+          ),
+          NavigationDestination(
+            icon: const Icon(Icons.settings_outlined),
+            selectedIcon: const Icon(Icons.settings),
+            label: l10n.navLabels[4],
+          ),
+        ],
       ),
     );
   }
 }
-
-
-class _LanguageChip extends StatelessWidget {
-  const _LanguageChip({
-    required this.flag,
-    required this.label,
-    required this.selected,
-    required this.onTap,
-  });
-
-  final String flag;
-  final String label;
-  final bool selected;
-  final VoidCallback? onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    return Material(
-      color: selected ? mintWash : Colors.white,
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(18),
-        side: BorderSide(color: selected ? emerald : border, width: selected ? 1.6 : 1),
-      ),
-      child: InkWell(
-        onTap: onTap,
-        borderRadius: BorderRadius.circular(18),
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 14),
-          child: Row(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              Text(flag, style: const TextStyle(fontSize: 22)),
-              const SizedBox(width: 8),
-              Flexible(
-                child: Text(
-                  label,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                    fontWeight: FontWeight.w800,
-                    color: selected ? emerald : ink,
-                  ),
-                ),
-              ),
-              if (selected) ...[
-                const SizedBox(width: 6),
-                const Icon(Icons.check_rounded, size: 18, color: emerald),
-              ],
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-}
-
 
 class _SettingsPairCard extends StatelessWidget {
   const _SettingsPairCard({

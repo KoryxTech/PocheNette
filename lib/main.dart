@@ -17,6 +17,8 @@ import 'receipt.dart';
 import 'security.dart';
 import 'stats_page.dart';
 import 'features/about/presentation/about_page.dart';
+import 'features/debts/domain/debt_constants.dart';
+import 'features/demo/demo_seed.dart';
 import 'features/splash/presentation/splash_view.dart';
 import 'core/config/brand_constants.dart';
 import 'package:url_launcher/url_launcher.dart';
@@ -129,6 +131,7 @@ class _DashboardState extends State<Dashboard> with WidgetsBindingObserver {
   List<RowData> wallets = [];
   List<RowData> operations = [];
   List<RowData> charges = [];
+  List<RowData> debts = [];
   List<RowData> goals = [];
   List<String> seen = [];
   List<String> categories = List<String>.from(defaultCategories());
@@ -189,6 +192,20 @@ class _DashboardState extends State<Dashboard> with WidgetsBindingObserver {
       if (localeCode != null) {
         PocheNette.of(context)?.setLocale(Locale(localeCode!));
       }
+      final empty =
+          wallets.isEmpty &&
+          operations.isEmpty &&
+          charges.isEmpty &&
+          debts.isEmpty &&
+          goals.isEmpty;
+      if (empty) {
+        restore(buildDemoSeed());
+        try {
+          await channel.invokeMethod<void>('save', jsonEncode(snapshot()));
+        } on PlatformException {
+          // Conservé en mémoire même si la sauvegarde échoue.
+        }
+      }
       setState(() {
         ready = true;
         unlocked = !lockEnabled;
@@ -201,6 +218,35 @@ class _DashboardState extends State<Dashboard> with WidgetsBindingObserver {
     }
   }
 
+  Future<void> loadDemoData({bool confirm = true}) async {
+    if (confirm) {
+      final ok = await showDialog<bool>(
+        context: context,
+        builder: (context) => AlertDialog(
+          title: Text(tr('Charger le jeu de démo')),
+          content: Text(
+            tr(
+              'Cela remplace portefeuilles, opérations, charges, dettes et épargne par un exemple complet.',
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context, false),
+              child: Text(tr('Annuler')),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(context, true),
+              child: Text(tr('Charger')),
+            ),
+          ],
+        ),
+      );
+      if (ok != true || !mounted) return;
+    }
+    await change(() => restore(buildDemoSeed()));
+    message(tr('Jeu de démo chargé.'));
+  }
+
   List<RowData> rows(dynamic source) => (source as List)
       .map((row) => Map<String, dynamic>.from(row as Map))
       .toList();
@@ -209,6 +255,7 @@ class _DashboardState extends State<Dashboard> with WidgetsBindingObserver {
     'wallets': wallets,
     'operations': operations,
     'charges': charges,
+    'debts': debts,
     'goals': goals,
     'seen': seen,
     'enabled': enabled,
@@ -227,6 +274,8 @@ class _DashboardState extends State<Dashboard> with WidgetsBindingObserver {
     wallets = rows(data['wallets']);
     operations = rows(data['operations']);
     charges = rows(data['charges']);
+    debts = rows(data['debts'] ?? const []);
+    sortDebtsByDueDate(debts);
     goals = rows(data['goals']).map(normalizeGoal).toList();
     seen = List<String>.from(data['seen'] as List? ?? const []);
     categories = List<String>.from(
@@ -349,6 +398,20 @@ class _DashboardState extends State<Dashboard> with WidgetsBindingObserver {
         await notifyChargeDue(
           charge['name'] as String,
           charge['amount'] as int,
+          l10n: l10n,
+        );
+      }
+    }
+    for (final debt in debts) {
+      if (!isOpenDebt(debt) || debt['reminder'] == false) continue;
+      final date = DateTime.parse(debt['date'] as String);
+      if (date.year == today.year &&
+          date.month == today.month &&
+          date.day == today.day) {
+        await notifyDebtDue(
+          person: debt['person'] as String? ?? '',
+          amount: debtAmount(debt),
+          isReceivable: isCreance(debt),
           l10n: l10n,
         );
       }
@@ -551,6 +614,16 @@ class _DashboardState extends State<Dashboard> with WidgetsBindingObserver {
         })
         .fold(0, (sum, charge) => sum + (charge['amount'] as int));
   }
+
+  int get openDebtsAmount => openDebtsTotal(debts);
+  int get openReceivablesAmount => openReceivablesTotal(debts);
+
+  /// Liquidités moins charges du mois et dettes encore dues.
+  int get realAvailable => availableBalance(
+    walletTotal: total,
+    upcomingCharges: upcoming,
+    debts: debts,
+  );
 
   Future<void> resolveCharge(RowData charge) async {
     final action = await showDialog<String>(
@@ -838,6 +911,12 @@ class _DashboardState extends State<Dashboard> with WidgetsBindingObserver {
     }
     if (lower.contains('charge') || lower.contains('bill')) {
       return Icons.event_note_outlined;
+    }
+    if (lower.contains('personne') ||
+        lower.contains('person') ||
+        lower.contains('rappel') ||
+        lower.contains('remind')) {
+      return Icons.person_outline;
     }
     if (lower.contains('portefeuille') ||
         lower.contains('wallet') ||
@@ -1327,6 +1406,205 @@ class _DashboardState extends State<Dashboard> with WidgetsBindingObserver {
     });
   }
 
+  Future<void> editDebt([RowData? debt]) async {
+    final now = DateTime.now();
+    final currentDate = debt == null
+        ? now
+        : DateTime.parse(debt['date'] as String);
+    final kindInitial = debt == null
+        ? 'Dette (je dois)'
+        : (isCreance(debt) ? 'Créance (on me doit)' : 'Dette (je dois)');
+    final values = await form(
+      debt == null ? 'Nouvelle dette / créance' : 'Modifier l’obligation',
+      [
+        field(
+          'Type',
+          choices: const ['Dette (je dois)', 'Créance (on me doit)'],
+          initial: kindInitial,
+        ),
+        field(
+          'Personne',
+          initial: debt?['person'] as String?,
+        ),
+        field(
+          'Montant en FCFA',
+          number: true,
+          initial: debt?['amount']?.toString(),
+        ),
+        field(
+          'Rappel à l’échéance',
+          choices: const ['Oui', 'Non'],
+          initial: debt == null || debt['reminder'] != false ? 'Oui' : 'Non',
+        ),
+        field(
+          'Détails',
+          optional: true,
+          initial: debt?['note'] as String?,
+        ),
+      ],
+      subtitle: 'Qui te doit, ou à qui tu dois — avec date d’échéance.',
+    );
+    if (values == null || !mounted) return;
+    final person = values[1].trim();
+    if (person.isEmpty) {
+      message('Indique le nom de la personne.');
+      return;
+    }
+    final amount = int.parse(values[2]);
+    if (amount <= 0) {
+      message('Entre un montant supérieur à zéro.');
+      return;
+    }
+    final date = await showDatePicker(
+      context: context,
+      initialDate: currentDate.isBefore(DateTime(2000))
+          ? now
+          : currentDate,
+      firstDate: DateTime(2000),
+      lastDate: DateTime(2100),
+      helpText: 'Choisir la date d’échéance',
+    );
+    if (date == null) return;
+    final kind = values[0].startsWith('Créance')
+        ? debtKindCreance
+        : debtKindDette;
+    await change(() {
+      final details = <String, dynamic>{
+        'id': debt?['id'] as String? ?? id(),
+        'kind': kind,
+        'person': person,
+        'amount': amount,
+        'date': date.toIso8601String(),
+        'reminder': values[3] == 'Oui',
+        'note': values[4],
+        'status': debt?['status'] as String? ?? debtStatusOpen,
+      };
+      if (debt == null) {
+        debts.add(details);
+      } else {
+        debt
+          ..remove('settledAt')
+          ..remove('settledWallet')
+          ..remove('settledWalletName');
+        debt.addAll(details);
+      }
+      sortDebtsByDueDate(debts);
+    });
+  }
+
+  Future<void> settleDebt(RowData debt) async {
+    if (!isOpenDebt(debt)) return;
+    if (wallets.isEmpty) {
+      await addWallet();
+      if (!mounted || wallets.isEmpty) return;
+    }
+    final receivable = isCreance(debt);
+    final action = await showDialog<String>(
+      context: context,
+      builder: (context) => SimpleDialog(
+        title: Text(
+          receivable
+              ? tr('Encaisser la créance')
+              : tr('Rembourser la dette'),
+        ),
+        children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(24, 0, 24, 12),
+            child: Text(
+              '${debt['person']} · ${money(debtAmount(debt))}',
+              style: const TextStyle(color: muted),
+            ),
+          ),
+          SimpleDialogOption(
+            onPressed: () => Navigator.pop(context, 'settle'),
+            child: Text(
+              receivable
+                  ? tr('Marquer comme perçu')
+                  : tr('Marquer comme payé'),
+            ),
+          ),
+          SimpleDialogOption(
+            onPressed: () => Navigator.pop(context, 'edit'),
+            child: Text(tr('Modifier')),
+          ),
+          SimpleDialogOption(
+            onPressed: () => Navigator.pop(context, 'delete'),
+            child: Text(tr('Supprimer')),
+          ),
+        ],
+      ),
+    );
+    if (action == null) return;
+    if (action == 'edit') {
+      await editDebt(debt);
+      return;
+    }
+    if (action == 'delete') {
+      await change(() => debts.remove(debt));
+      return;
+    }
+
+    final names = wallets.map(walletName).toList();
+    final values = await form(
+      receivable
+          ? 'Portefeuille de réception'
+          : 'Portefeuille de paiement',
+      [
+        field(
+          'Portefeuille',
+          choices: names,
+        ),
+      ],
+      subtitle: receivable
+          ? 'Les fonds seront ajoutés à ce portefeuille.'
+          : 'Le montant sera débité de ce portefeuille.',
+      confirmLabel: receivable ? 'Valider l’encaissement' : 'Valider le paiement',
+    );
+    if (values == null) return;
+    final index = wallets.indexWhere(
+      (wallet) => walletName(wallet) == values[0],
+    );
+    if (index < 0) return;
+    final wallet = wallets[index];
+    final amount = debtAmount(debt);
+    if (!receivable && balance(wallet) < amount) {
+      message('Le solde disponible de ce portefeuille est insuffisant.');
+      return;
+    }
+    final now = DateTime.now().millisecondsSinceEpoch;
+    final label = receivable ? debtIncomeLabel : debtExpenseLabel;
+    final extraNote = (debt['note'] as String? ?? '').trim();
+    final operationNote = extraNote.isEmpty
+        ? '${debt['person']}'
+        : '${debt['person']} · $extraNote';
+    await change(() {
+      operations.add({
+        'id': id(),
+        'wallet': wallet['id'],
+        'label': label,
+        'type': receivable ? 'Revenu' : 'Dépense',
+        'delta': receivable ? amount : -amount,
+        'at': now,
+        'transfer': false,
+        'note': operationNote,
+        'debtId': debt['id'],
+      });
+      debt['status'] = debtStatusSettled;
+      debt['settledAt'] = now;
+      debt['settledWallet'] = wallet['id'];
+      debt['settledWalletName'] = walletName(wallet);
+      sortDebtsByDueDate(debts);
+      if (receivable) {
+        allocateIncome(wallet, label, amount, now);
+      }
+    });
+    message(
+      receivable
+          ? tr('Créance encaissée — solde actualisé.')
+          : tr('Dette remboursée — solde actualisé.'),
+    );
+  }
+
   Future<void> addGoal() async {
     final values = await form('Nouvel objectif', [
       field('Projet'),
@@ -1616,6 +1894,132 @@ class _DashboardState extends State<Dashboard> with WidgetsBindingObserver {
     ),
   );
 
+  Widget debtStatusChip(bool open, {bool overdue = false}) {
+    final label = open
+        ? (overdue ? tr('En retard') : tr('En attente'))
+        : tr('Réglé');
+    final color = open ? (overdue ? rose : const Color(0xffc27803)) : emerald;
+    final background = open
+        ? (overdue ? const Color(0xffffe4e8) : const Color(0xfffff3d6))
+        : mintWash;
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+      decoration: BoxDecoration(
+        color: background,
+        borderRadius: BorderRadius.circular(999),
+      ),
+      child: Text(
+        label,
+        style: TextStyle(
+          color: color,
+          fontWeight: FontWeight.w800,
+          fontSize: 12,
+        ),
+      ),
+    );
+  }
+
+  Widget debtCard(RowData debt) {
+    final receivable = isCreance(debt);
+    final open = isOpenDebt(debt);
+    final due = DateTime.parse(debt['date'] as String);
+    final today = DateTime.now();
+    final dueDay = DateTime(due.year, due.month, due.day);
+    final todayDay = DateTime(today.year, today.month, today.day);
+    final overdue = open && dueDay.isBefore(todayDay);
+    final settledWallet = debt['settledWalletName'] as String?;
+    final settledAt = debt['settledAt'];
+    final detail = open
+        ? '${money(debtAmount(debt))} · ${dateText(due)}'
+        : '${money(debtAmount(debt))}'
+            '${settledWallet != null ? ' · $settledWallet' : ''}'
+            '${settledAt is int ? ' · ${dateText(DateTime.fromMillisecondsSinceEpoch(settledAt))}' : ''}';
+    final actionColor = receivable ? emerald : rose;
+    return Card(
+      child: InkWell(
+        onTap: open && !saving ? () => editDebt(debt) : null,
+        borderRadius: BorderRadius.circular(24),
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(14, 12, 14, 12),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              IconPlate(
+                receivable ? Icons.south_west : Icons.north_east,
+                color: open ? actionColor : muted,
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      debt['person'] as String,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        fontWeight: FontWeight.w800,
+                        fontSize: 16,
+                      ),
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      detail,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(color: muted, height: 1.3),
+                    ),
+                    if ((debt['note'] as String?)?.trim().isNotEmpty ==
+                        true) ...[
+                      const SizedBox(height: 2),
+                      Text(
+                        debt['note'] as String,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(color: muted, fontSize: 12),
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+              const SizedBox(width: 10),
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.end,
+                children: [
+                  debtStatusChip(open, overdue: overdue),
+                  if (open) ...[
+                    const SizedBox(height: 8),
+                    FilledButton(
+                      onPressed: saving ? null : () => settleDebt(debt),
+                      style: FilledButton.styleFrom(
+                        backgroundColor: actionColor,
+                        foregroundColor: Colors.white,
+                        minimumSize: const Size(0, 36),
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 14,
+                          vertical: 8,
+                        ),
+                        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                        visualDensity: VisualDensity.compact,
+                      ),
+                      child: Text(
+                        receivable ? tr('Encaisser') : tr('Payer'),
+                        style: const TextStyle(
+                          fontWeight: FontWeight.w800,
+                          fontSize: 13,
+                        ),
+                      ),
+                    ),
+                  ],
+                ],
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
   List<Widget> history({String? wallet, Iterable<RowData>? entries}) {
     final sorted =
         (entries ?? operations)
@@ -1723,7 +2127,9 @@ class _DashboardState extends State<Dashboard> with WidgetsBindingObserver {
       );
     }
     final now = DateTime.now();
-    final remaining = total - upcoming;
+    final remaining = realAvailable;
+    final receivables = openReceivablesAmount;
+    final debtsDue = openDebtsAmount;
     // Légende : noms courts, 2 lignes max (~8 chips).
     const maxLegendChips = 8;
     const autresLegendKey = '__autres__';
@@ -1864,16 +2270,16 @@ class _DashboardState extends State<Dashboard> with WidgetsBindingObserver {
       ],
       const SizedBox(height: 18),
       SummaryPanel(
-        label: tr('Reste après les charges du mois'),
+        label: tr('Solde réellement disponible'),
         amount: money(remaining),
         footer: l10n.isEnglish
-            ? '${money(upcoming)} in bills due'
-            : '${money(upcoming)} de charges à régler',
+            ? '${money(upcoming)} bills · ${money(debtsDue)} debts owed'
+            : '${money(upcoming)} charges · ${money(debtsDue)} dettes dues',
       ),
       if (remaining < 0)
         tile(
           'Solde insuffisant',
-          'Tes soldes ne couvrent pas les charges du mois.',
+          'Tes liquidités ne couvrent pas les charges et dettes prévues.',
           leading: const IconPlate(Icons.warning_amber_rounded, color: rose),
         ),
       if (wallets.isEmpty)
@@ -1909,6 +2315,14 @@ class _DashboardState extends State<Dashboard> with WidgetsBindingObserver {
           ),
         ],
       ),
+      if (receivables > 0) ...[
+        const SizedBox(height: 10),
+        tile(
+          'Créances à recevoir',
+          '${money(receivables)} ${tr('non réalisées jusqu’à encaissement')}',
+          leading: const IconPlate(Icons.south_west, color: emerald),
+        ),
+      ],
     ];
     final recentOperations = <Widget>[
       section(
@@ -1936,13 +2350,19 @@ class _DashboardState extends State<Dashboard> with WidgetsBindingObserver {
     final (left, right, leftAction, rightAction) = switch (tab) {
       0 => () {
         final overviewContent = overview(wide: true);
+        // Garde Dépense/Revenu dans le flux : les créances restent sous les boutons.
+        final balance = overviewContent.balance;
+        final actionIndex = balance.lastIndexWhere((widget) => widget is Row);
+        if (actionIndex < 0) {
+          return (balance, overviewContent.activity, null, null);
+        }
         return (
-          overviewContent.balance.sublist(
-            0,
-            overviewContent.balance.length - 1,
-          ),
+          [
+            ...balance.take(actionIndex),
+            ...balance.skip(actionIndex + 1),
+          ],
           overviewContent.activity,
-          overviewContent.balance.last,
+          balance[actionIndex],
           null,
         );
       }(),
@@ -2427,14 +2847,24 @@ class _DashboardState extends State<Dashboard> with WidgetsBindingObserver {
         ];
       case 2:
         final now = DateTime.now();
+        final dettes = debts.where(isDette).toList();
+        final creances = debts.where(isCreance).toList();
+        sortDebtsByDueDate(dettes);
+        sortDebtsByDueDate(creances);
         return [
           SummaryPanel(
-            label: tr('Charges à régler ce mois-ci'),
-            amount: money(upcoming),
+            label: tr('Solde réellement disponible'),
+            amount: money(realAvailable),
             footer: l10n.isEnglish
-                ? 'Left after bills · ${money(total - upcoming)}'
-                : 'Reste après les charges · ${money(total - upcoming)}',
+                ? 'Wallets ${money(total)} · bills ${money(upcoming)} · debts ${money(openDebtsAmount)}'
+                : 'Poches ${money(total)} · charges ${money(upcoming)} · dettes ${money(openDebtsAmount)}',
           ),
+          if (openReceivablesAmount > 0)
+            tile(
+              'Créances en attente',
+              '${money(openReceivablesAmount)} ${tr('non comptées dans le disponible')}',
+              leading: const IconPlate(Icons.hourglass_empty, color: emerald),
+            ),
           section(
             'Prochaines échéances',
             action: TextButton(
@@ -2473,10 +2903,31 @@ class _DashboardState extends State<Dashboard> with WidgetsBindingObserver {
                 icon: const Icon(Icons.more_vert),
               ),
             ),
-          FilledButton.icon(
+          OutlinedButton.icon(
             onPressed: saving ? null : () => editCharge(),
             icon: const Icon(Icons.add),
             label: Text(tr('Ajouter une charge')),
+          ),
+          section('Dettes (je dois)'),
+          if (dettes.isEmpty)
+            tile(
+              'Aucune dette',
+              'Enregistre ce que tu dois pour le réserver dans ton disponible.',
+              leading: const IconPlate(Icons.north_east, color: rose),
+            ),
+          for (final debt in dettes) debtCard(debt),
+          section('Créances (on me doit)'),
+          if (creances.isEmpty)
+            tile(
+              'Aucune créance',
+              'Ce que l’on te doit reste hors solde jusqu’à encaissement.',
+              leading: const IconPlate(Icons.south_west, color: emerald),
+            ),
+          for (final debt in creances) debtCard(debt),
+          FilledButton.icon(
+            onPressed: saving ? null : () => editDebt(),
+            icon: const Icon(Icons.add),
+            label: Text(tr('Ajouter dette / créance')),
           ),
         ];
       case 3:
@@ -2740,6 +3191,13 @@ class _DashboardState extends State<Dashboard> with WidgetsBindingObserver {
             },
           ),
           section('Données'),
+          tile(
+            'Jeu de démo',
+            'Peuple l’app avec un exemple complet (FCFA).',
+            leading: const IconPlate(Icons.auto_awesome_outlined),
+            trailing: const Icon(Icons.chevron_right),
+            onTap: saving ? null : () => loadDemoData(),
+          ),
           Row(
             children: [
               Expanded(

@@ -94,6 +94,41 @@ Future<void> notifyChargeDue(String name, int amount, {L10n? l10n}) async {
   } catch (_) {}
 }
 
+Future<void> notifyDebtDue({
+  required String person,
+  required int amount,
+  required bool isReceivable,
+  L10n? l10n,
+}) async {
+  try {
+    final english = l10n?.isEnglish ?? false;
+    final details = NotificationDetails(
+      android: AndroidNotificationDetails(
+        'debts',
+        english ? 'Debts & receivables' : 'Dettes et créances',
+        channelDescription: english
+            ? 'Reminders for debts and receivables due'
+            : 'Rappels de dettes et créances à échéance',
+        importance: Importance.defaultImportance,
+        priority: Priority.defaultPriority,
+      ),
+      iOS: const DarwinNotificationDetails(),
+    );
+    final title = isReceivable
+        ? (english ? 'Receivable due today' : 'Créance à encaisser')
+        : (english ? 'Debt due today' : 'Dette à rembourser');
+    final verb = isReceivable
+        ? (english ? 'owed by' : 'dû par')
+        : (english ? 'owed to' : 'dû à');
+    await notifications.show(
+      isReceivable ? 44 : 43,
+      title,
+      '$verb $person · ${_groupFcfa(amount)} FCFA',
+      details,
+    );
+  } catch (_) {}
+}
+
 class ThresholdBanner extends StatelessWidget {
   const ThresholdBanner({
     super.key,

@@ -1,0 +1,393 @@
+import '../../catalog.dart';
+
+/// Jeu de données démo réaliste (contexte Cameroun / FCFA).
+Map<String, dynamic> buildDemoSeed({DateTime? now}) {
+  final clock = now ?? DateTime.now();
+  final today = DateTime(clock.year, clock.month, clock.day);
+  int daysAgo(int days, {int hour = 10, int minute = 0}) =>
+      today.subtract(Duration(days: days)).add(Duration(hours: hour, minutes: minute)).millisecondsSinceEpoch;
+  String dueIn(int days) =>
+      today.add(Duration(days: days)).toIso8601String();
+  String dueOnDay(int day) {
+    final candidate = DateTime(clock.year, clock.month, day);
+    final date = candidate.isBefore(today)
+        ? DateTime(clock.year, clock.month + 1, day)
+        : candidate;
+    return date.toIso8601String();
+  }
+
+  const orangeId = 'demo-wallet-orange';
+  const mtnId = 'demo-wallet-mtn';
+  const cashId = 'demo-wallet-cash';
+  const bankId = 'demo-wallet-bank';
+
+  final created = daysAgo(90, hour: 8);
+  // `at` au présent : l’historique s’affiche sans double-compter les deltas.
+  // Les versements d’épargne sont déduits du solde → on les anticipe ici.
+  final syncAt = clock.millisecondsSinceEpoch;
+
+  return {
+    'wallets': [
+      {
+        'id': orangeId,
+        'provider': 'Orange Money',
+        'balance': 87500 + 15000,
+        'created': created,
+        'at': syncAt,
+      },
+      {
+        'id': mtnId,
+        'provider': 'MTN MoMo',
+        'balance': 64200 + 10000,
+        'created': created,
+        'at': syncAt,
+      },
+      {
+        'id': cashId,
+        'provider': 'Espèces',
+        'balance': 28500,
+        'created': created,
+        'at': syncAt,
+      },
+      {
+        'id': bankId,
+        'provider': 'Banque',
+        'bank': 'AFG Bank Cameroun',
+        'balance': 245000 + 105000,
+        'created': created,
+        'at': syncAt,
+      },
+    ],
+    'operations': [
+      {
+        'id': 'demo-op-1',
+        'wallet': bankId,
+        'label': 'Salaire',
+        'type': 'Revenu',
+        'delta': 280000,
+        'at': daysAgo(12, hour: 9, minute: 15),
+        'transfer': false,
+        'note': 'Salaire novembre',
+      },
+      {
+        'id': 'demo-op-2',
+        'wallet': bankId,
+        'label': 'Transfert',
+        'type': 'Dépense',
+        'delta': -50000,
+        'at': daysAgo(12, hour: 9, minute: 40),
+        'transfer': true,
+        'note': 'Vers Orange Money',
+      },
+      {
+        'id': 'demo-op-3',
+        'wallet': orangeId,
+        'label': 'Transfert',
+        'type': 'Revenu',
+        'delta': 50000,
+        'at': daysAgo(12, hour: 9, minute: 41),
+        'transfer': true,
+        'note': 'Depuis AFG Bank',
+      },
+      {
+        'id': 'demo-op-4',
+        'wallet': orangeId,
+        'label': 'Loyer',
+        'type': 'Dépense',
+        'delta': -75000,
+        'at': daysAgo(10, hour: 8, minute: 20),
+        'transfer': false,
+        'note': 'Loyer novembre',
+      },
+      {
+        'id': 'demo-op-5',
+        'wallet': mtnId,
+        'label': 'Business / vente',
+        'type': 'Revenu',
+        'delta': 35000,
+        'at': daysAgo(8, hour: 16, minute: 45),
+        'transfer': false,
+        'note': 'Vente boutique',
+      },
+      {
+        'id': 'demo-op-6',
+        'wallet': cashId,
+        'label': 'Marché / courses',
+        'type': 'Dépense',
+        'delta': -12500,
+        'at': daysAgo(7, hour: 11, minute: 10),
+        'transfer': false,
+        'note': 'Marché Mvog-Ada',
+      },
+      {
+        'id': 'demo-op-7',
+        'wallet': orangeId,
+        'label': 'Transport (taxi, okada)',
+        'type': 'Dépense',
+        'delta': -2500,
+        'at': daysAgo(6, hour: 7, minute: 40),
+        'transfer': false,
+        'note': 'Okada bureau',
+      },
+      {
+        'id': 'demo-op-8',
+        'wallet': mtnId,
+        'label': 'Crédit téléphone',
+        'type': 'Dépense',
+        'delta': -5000,
+        'at': daysAgo(5, hour: 19, minute: 5),
+        'transfer': false,
+        'note': 'Forfait data',
+      },
+      {
+        'id': 'demo-op-9',
+        'wallet': orangeId,
+        'label': 'Maquis / restaurant',
+        'type': 'Dépense',
+        'delta': -4500,
+        'at': daysAgo(4, hour: 13, minute: 30),
+        'transfer': false,
+        'note': 'Déjeuner',
+      },
+      {
+        'id': 'demo-op-10',
+        'wallet': bankId,
+        'label': 'Électricité (ENEO)',
+        'type': 'Dépense',
+        'delta': -18500,
+        'at': daysAgo(4, hour: 10),
+        'transfer': false,
+        'note': 'Facture ENEO',
+      },
+      {
+        'id': 'demo-op-11',
+        'wallet': mtnId,
+        'label': 'Tontine (cotisation)',
+        'type': 'Dépense',
+        'delta': -20000,
+        'at': daysAgo(3, hour: 17, minute: 20),
+        'transfer': false,
+        'note': 'Cotisation semaine',
+      },
+      {
+        'id': 'demo-op-12',
+        'wallet': cashId,
+        'label': 'Santé / pharmacie',
+        'type': 'Dépense',
+        'delta': -3500,
+        'at': daysAgo(2, hour: 15),
+        'transfer': false,
+        'note': 'Pharmacie',
+      },
+      {
+        'id': 'demo-op-13',
+        'wallet': orangeId,
+        'label': 'Freelance / prestation',
+        'type': 'Revenu',
+        'delta': 45000,
+        'at': daysAgo(1, hour: 18, minute: 22),
+        'transfer': false,
+        'note': 'Prestation client',
+      },
+      {
+        'id': 'demo-op-14',
+        'wallet': mtnId,
+        'label': 'Carburant',
+        'type': 'Dépense',
+        'delta': -10000,
+        'at': daysAgo(1, hour: 8, minute: 5),
+        'transfer': false,
+        'note': 'Plein moto',
+      },
+      {
+        'id': 'demo-op-15',
+        'wallet': cashId,
+        'label': 'Cadeaux',
+        'type': 'Dépense',
+        'delta': -8000,
+        'at': daysAgo(0, hour: 12),
+        'transfer': false,
+        'note': 'Cadeau anniversaire',
+      },
+    ],
+    'charges': [
+      {
+        'name': 'Loyer',
+        'amount': 75000,
+        'frequency': 'Mensuelle',
+        'wallet': 'Orange Money',
+        'date': dueOnDay(5),
+        'day': 5,
+        'note': 'Maison Bastos',
+      },
+      {
+        'name': 'Électricité ENEO',
+        'amount': 18000,
+        'frequency': 'Mensuelle',
+        'wallet': 'AFG Bank Cameroun',
+        'date': dueOnDay(12),
+        'day': 12,
+        'note': '',
+      },
+      {
+        'name': 'Eau Camwater',
+        'amount': 6500,
+        'frequency': 'Mensuelle',
+        'wallet': 'MTN MoMo',
+        'date': dueOnDay(15),
+        'day': 15,
+        'note': '',
+      },
+      {
+        'name': 'Canal+ / TV',
+        'amount': 12000,
+        'frequency': 'Mensuelle',
+        'wallet': 'Orange Money',
+        'date': dueOnDay(20),
+        'day': 20,
+        'note': 'Bouquet Access',
+      },
+      {
+        'name': 'Cotisation tontine',
+        'amount': 20000,
+        'frequency': 'Mensuelle',
+        'wallet': 'MTN MoMo',
+        'date': dueIn(3),
+        'day': today.add(const Duration(days: 3)).day,
+        'note': 'Groupe quartier',
+      },
+      {
+        'name': 'Internet / fibre',
+        'amount': 25000,
+        'frequency': 'Mensuelle',
+        'wallet': 'AFG Bank Cameroun',
+        'date': dueOnDay(8),
+        'day': 8,
+        'note': 'Camtel fibre',
+      },
+    ],
+    'debts': [
+      {
+        'id': 'demo-debt-1',
+        'kind': 'dette',
+        'person': 'Jean-Paul',
+        'amount': 25000,
+        'date': dueIn(4),
+        'reminder': true,
+        'note': 'Prêt urgence pharmacie',
+        'status': 'open',
+      },
+      {
+        'id': 'demo-debt-2',
+        'kind': 'dette',
+        'person': 'Tantine Marie',
+        'amount': 15000,
+        'date': dueIn(10),
+        'reminder': true,
+        'note': 'Avance marché',
+        'status': 'open',
+      },
+      {
+        'id': 'demo-debt-3',
+        'kind': 'creance',
+        'person': 'Aïcha',
+        'amount': 40000,
+        'date': dueIn(2),
+        'reminder': true,
+        'note': 'Remboursement business',
+        'status': 'open',
+      },
+      {
+        'id': 'demo-debt-4',
+        'kind': 'creance',
+        'person': 'Cousin Franck',
+        'amount': 10000,
+        'date': dueIn(14),
+        'reminder': false,
+        'note': 'Okada partagé',
+        'status': 'open',
+      },
+      {
+        'id': 'demo-debt-5',
+        'kind': 'dette',
+        'person': 'Boutique Mama',
+        'amount': 5000,
+        'date': dueIn(-3),
+        'reminder': true,
+        'note': 'Crédit riz',
+        'status': 'settled',
+        'settledAt': daysAgo(1, hour: 14),
+        'settledWallet': cashId,
+        'settledWalletName': 'Espèces',
+      },
+    ],
+    'goals': [
+      {
+        'name': 'Voyage Douala–Yaoundé',
+        'amount': 80000,
+        'payments': [
+          {
+            'amount': 15000,
+            'at': daysAgo(20, hour: 10),
+            'wallet': orangeId,
+            'walletName': 'Orange Money',
+          },
+          {
+            'amount': 10000,
+            'at': daysAgo(9, hour: 19),
+            'wallet': mtnId,
+            'walletName': 'MTN MoMo',
+            'automatic': true,
+          },
+        ],
+        'incomeCategory': 'Salaire',
+        'incomePercent': 5,
+      },
+      {
+        'name': 'Acompte moto',
+        'amount': 350000,
+        'payments': [
+          {
+            'amount': 50000,
+            'at': daysAgo(30, hour: 11),
+            'wallet': bankId,
+            'walletName': 'AFG Bank Cameroun',
+          },
+          {
+            'amount': 25000,
+            'at': daysAgo(15, hour: 16),
+            'wallet': bankId,
+            'walletName': 'AFG Bank Cameroun',
+          },
+        ],
+        'incomeCategory': 'Business / vente',
+        'incomePercent': 10,
+      },
+      {
+        'name': 'Fonds d’urgence',
+        'amount': 150000,
+        'payments': [
+          {
+            'amount': 30000,
+            'at': daysAgo(25, hour: 9),
+            'wallet': bankId,
+            'walletName': 'AFG Bank Cameroun',
+          },
+        ],
+        'incomeCategory': 'Freelance / prestation',
+        'incomePercent': 15,
+      },
+    ],
+    'seen': <String>[],
+    'enabled': false,
+    'since': created,
+    'categories': defaultCategories(),
+    'extraExpenseCategories': <String>[],
+    'extraIncomeCategories': <String>[],
+    'onboardingDone': true,
+    'thresholdEnabled': true,
+    'thresholdAmount': 50000,
+    'alertsEnabled': true,
+    'localeCode': 'fr',
+  };
+}

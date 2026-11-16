@@ -14,9 +14,9 @@ List<({String title, List<(String, String)> steps})> pageGuides(L10n l10n) => [
         ),
       ),
       (
-        l10n.t('Lis le reste du mois'),
+        l10n.t('Lis le solde disponible'),
         l10n.t(
-          'PocheNette soustrait les charges à régler du total de tes portefeuilles. Le total des soldes reste affiché dans la roue.',
+          'Le solde réellement disponible retire les charges du mois et les dettes ouvertes. Les créances restent hors solde tant que tu ne les as pas encaissées.',
         ),
       ),
       (
@@ -69,6 +69,12 @@ List<({String title, List<(String, String)> steps})> pageGuides(L10n l10n) => [
         l10n.t('Marque-la comme réglée'),
         l10n.t(
           'Ouvre le menu de la charge. Une charge récurrente passe à sa prochaine échéance. Saisis le paiement dans tes transactions si aucun reçu ne l’a enregistré.',
+        ),
+      ),
+      (
+        l10n.t('Gère dettes et créances'),
+        l10n.t(
+          'Ajoute ce que tu dois ou ce qu’on te doit. À l’échéance, valide le paiement ou l’encaissement et choisis le portefeuille : le solde se met à jour automatiquement.',
         ),
       ),
     ],

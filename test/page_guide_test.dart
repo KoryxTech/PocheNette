@@ -18,6 +18,7 @@ void main() {
             'wallets': <dynamic>[],
             'operations': <dynamic>[],
             'charges': <dynamic>[],
+            'debts': <dynamic>[],
             'goals': <dynamic>[],
             'seen': <dynamic>[],
             'enabled': false,

@@ -192,20 +192,6 @@ class _DashboardState extends State<Dashboard> with WidgetsBindingObserver {
       if (localeCode != null) {
         PocheNette.of(context)?.setLocale(Locale(localeCode!));
       }
-      final empty =
-          wallets.isEmpty &&
-          operations.isEmpty &&
-          charges.isEmpty &&
-          debts.isEmpty &&
-          goals.isEmpty;
-      if (empty) {
-        restore(buildDemoSeed());
-        try {
-          await channel.invokeMethod<void>('save', jsonEncode(snapshot()));
-        } on PlatformException {
-          // Conservé en mémoire même si la sauvegarde échoue.
-        }
-      }
       setState(() {
         ready = true;
         unlocked = !lockEnabled;
